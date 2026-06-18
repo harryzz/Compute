@@ -23,6 +23,15 @@ AGClosureStorage AGRetainClosure(const void *thunk, const void *_Nullable contex
     return AGClosureStorage((void *)thunk, retained_context);
 }
 
+#if defined(__wasi__)
+// WASI: non-refined C variant so Swift imports it with the C ABI (the swiftcall
+// closure ABI mismatches across swiftc/clang on wasm). Same retain semantics.
+AGClosureStorage AGRetainClosureC(const void *thunk, const void *_Nullable context) {
+    const void *retained_context = context ? AG::retain_swift_context(context) : nullptr;
+    return AGClosureStorage((void *)thunk, retained_context);
+}
+#endif
+
 void AGReleaseClosure(AGClosureStorage closure) {
     if (closure.context) {
         AG::release_swift_context(closure.context);

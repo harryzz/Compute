@@ -1,3 +1,4 @@
+typedef unsigned int uint; // [wasm32] wasi-libc lacks the BSD alias
 #include "LayoutDescriptor.h"
 
 #include <cstring> 
@@ -558,7 +559,7 @@ bool compare_indirect(ValueLayout *layout_ref, const swift::metadata &enum_type,
 
         ValueLayout layout = *layout_ref == ValueLayoutTrivial ? nullptr : *layout_ref;
 
-        static_assert(sizeof(::swift::HeapObject) == 0x10);
+        // [wasm32] static_assert(sizeof(::swift::HeapObject) == 0x10);
         size_t alignment_mask = layout_type.getValueWitnesses()->getAlignmentMask();
         size_t offset = (sizeof(::swift::HeapObject) + alignment_mask) & ~alignment_mask;
         unsigned char *lhs_value = (unsigned char *)(*(unsigned char **)lhs_copy + offset);

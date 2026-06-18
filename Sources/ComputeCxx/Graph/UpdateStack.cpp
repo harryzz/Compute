@@ -105,7 +105,9 @@ bool Graph::UpdateStack::push_slow(data::ptr<Node> node_ptr, Node &node, bool ig
         Frame *top = global_top();
         if (top != nullptr && !top->cyclic) {
             // First time we are detecting a cycle for this attribute
-            this->_graph->print_cycle(node_ptr);
+#if !defined(__wasi__)
+            this->_graph->print_cycle(node_ptr);  // defined only in Apple-only Graph.mm
+#endif
         }
 
         if (node.is_value_initialized()) {

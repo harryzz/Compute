@@ -187,6 +187,18 @@ uint32_t AGGraphInternAttributeType(AGUnownedGraphContextRef unowned_graph, AGTy
         metadata, AG::ClosureFunctionVP<const AGAttributeType *>(make_attribute_type, make_attribute_type_context));
 }
 
+#if defined(__wasi__)
+// WASI: plain C-CC callback entry (the swiftcall closure ABI above does not lower
+// consistently across swiftc/clang on wasm). The Swift side keeps the closure call
+// in-language and passes a non-capturing @convention(c) thunk + a context pointer.
+extern "C" uint32_t AGGraphInternAttributeTypeC(AGUnownedGraphContextRef unowned_graph, AGTypeID type,
+                                                 const void *(*make)(const void *), const void *ctx) {
+    auto metadata = reinterpret_cast<const AG::swift::metadata *>(type);
+    AG::Graph *graph = reinterpret_cast<AG::Graph *>(unowned_graph);
+    return graph->intern_type_c(metadata, make, ctx);
+}
+#endif
+
 void AGGraphVerifyType(AGAttribute attribute, AGTypeID type) {
     auto attribute_id = AG::AttributeID(attribute);
     attribute_id.validate_data_offset();
@@ -898,6 +910,14 @@ void AGGraphSetOutputValue(const void *value, AGTypeID type) {
     auto metadata = reinterpret_cast<const AG::swift::metadata *>(type);
     graph->value_set_internal(frame.attribute, *frame.attribute.get(), value, *metadata);
 }
+
+#if defined(__wasi__)
+// WASI: non-refined C variant so Swift imports it with the C ABI (@_silgen_name
+// mislowers the call on wasm -> signature_mismatch).
+extern "C" void AGGraphSetOutputValueC(const void *value, AGTypeID type) {
+    AGGraphSetOutputValue(value, type);
+}
+#endif
 
 #pragma mark - Trace
 

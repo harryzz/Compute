@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstring>
 #include <sys/mman.h>
 #if TARGET_OS_MAC
 #include <mach/mach.h>
@@ -46,7 +47,9 @@ std::unique_ptr<void, table::malloc_zone_deleter> table::alloc_persistent(size_t
 table::table() {
     constexpr vm_size_t initial_size = 32 * pages_per_map * page_size;
 
-#if TARGET_OS_MAC
+#if TARGET_OS_MAC || defined(__wasi__)
+    // WASI: take the macOS-shaped anonymous-mmap path (wasi-libc's emulated mman
+    // honors MAP_PRIVATE|MAP_ANON). No memfd_create / MAP_SHARED (unsupported, WASI#304).
     void *region = mmap(nullptr, initial_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (region == MAP_FAILED) {
         precondition_failure("memory allocation failure (%u bytes, %u)", initial_size, errno);
@@ -82,7 +85,7 @@ table::table() {
 }
 
 table::~table() {
-#if !TARGET_OS_MAC
+#if !TARGET_OS_MAC && !defined(__wasi__)
     close(_vm_region_fd);
 #endif
     if (_malloc_zone) {
@@ -104,7 +107,17 @@ void table::grow_region() {
         precondition_failure("exhausted data space");
     }
 
-#if TARGET_OS_MAC
+#if defined(__wasi__)
+    // WASI: emulated mmap is anonymous-only (no vm_remap, no MAP_SHARED). Reserve a
+    // fresh, bigger anonymous region and memcpy the old contents in. The old mapping
+    // is retained in _remapped_regions and ptr<T> is offset-based, so already-handed-
+    // out pointers stay valid against whichever base resolved them.
+    void *new_region = mmap(nullptr, new_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (new_region == MAP_FAILED) {
+        precondition_failure("memory allocation failure (%u bytes, %u)", new_size, errno);
+    }
+    memcpy(new_region, reinterpret_cast<void *>(_vm_region_base_address), _vm_region_size);
+#elif TARGET_OS_MAC
     void *new_region = mmap(nullptr, new_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (new_region == MAP_FAILED) {
         precondition_failure("memory allocation failure (%u bytes, %u)", new_size, errno);
@@ -280,7 +293,11 @@ void table::make_pages_reusable(uint32_t page_index, bool reusable) {
 #else
     int advice = reusable ? MADV_FREE : MADV_NORMAL;
 #endif
+#if !defined(__wasi__)
     madvise(mapped_pages_address, mapped_pages_size, advice);
+#else
+    (void)mapped_pages_address; (void)advice;  // WASI: no madvise (advisory page-reuse only)
+#endif
 
     static bool unmap_reusable = []() -> bool {
         char *result = getenv("AG_UNMAP_REUSABLE");

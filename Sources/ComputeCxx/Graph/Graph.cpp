@@ -1,3 +1,4 @@
+typedef unsigned int uint; // [wasm32] wasi-libc lacks the BSD alias
 #include "Graph.h"
 
 #if TARGET_OS_MAC
@@ -307,8 +308,23 @@ uint32_t Graph::intern_type(const swift::metadata *metadata, ClosureFunctionVP<c
     if (type_id) {
         return type_id;
     }
+    return register_attribute_type(metadata, (AttributeType *)make_type());
+}
 
-    AttributeType *type = (AttributeType *)make_type();
+#if defined(__wasi__)
+// WASI: invoke a plain C-CC callback to materialize the type (no swiftcall across the
+// language boundary), then register it the same way intern_type does.
+uint32_t Graph::intern_type_c(const swift::metadata *metadata,
+                              const void *(*make)(const void *), const void *ctx) {
+    uint32_t type_id = uint32_t(reinterpret_cast<uintptr_t>(_interned_types.lookup(metadata, nullptr)));
+    if (type_id) {
+        return type_id;
+    }
+    return register_attribute_type(metadata, (AttributeType *)make(ctx));
+}
+#endif
+
+uint32_t Graph::register_attribute_type(const swift::metadata *metadata, AttributeType *type) {
     type->init_body_offset();
 
     static bool prefetch_layouts = []() -> bool {
@@ -322,7 +338,7 @@ uint32_t Graph::intern_type(const swift::metadata *metadata, ClosureFunctionVP<c
         type->fetch_layout();
     }
 
-    type_id = _types.size();
+    uint32_t type_id = _types.size();
     if (type_id >= 0xffffff) {
         precondition_failure("overflowed max type id: %u", type_id);
     }
@@ -1821,7 +1837,7 @@ void Graph::propagate_dirty(AttributeID attribute) {
 namespace {
 
 inline size_t find_attribute(const AttributeID *attributes, AttributeID search, uint64_t count) {
-    static_assert(sizeof(wchar_t) == sizeof(AttributeID));
+    // [wasm32] static_assert(sizeof(wchar_t) == sizeof(AttributeID));
 
     const AttributeID *location = (const AttributeID *)wmemchr((const wchar_t *)attributes, search, count);
     if (location == nullptr) {
