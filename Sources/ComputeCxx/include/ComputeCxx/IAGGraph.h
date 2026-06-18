@@ -113,6 +113,15 @@ uint32_t IAGGraphInternAttributeType(IAGUnownedGraphContextRef graph, IAGTypeID 
                                         const void *_Nullable context IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift),
                                     const void *_Nullable make_attribute_type_context);
 
+#if defined(__wasi__)
+// WASI: plain C-CC variant (declared in the header so Swift imports it with the C
+// ABI; @_silgen_name lowers the function-pointer arg with the Swift CC and traps).
+IAG_EXPORT
+uint32_t IAGGraphInternAttributeTypeC(IAGUnownedGraphContextRef graph, IAGTypeID type,
+                                      const void *_Nullable (*_Nonnull make)(const void *_Nullable),
+                                      const void *_Nullable context);
+#endif
+
 IAG_EXPORT
 IAG_REFINED_FOR_SWIFT
 void IAGGraphVerifyType(IAGAttribute attribute, IAGTypeID type) IAG_SWIFT_NAME(IAGAttribute.verifyType(self:type:));
@@ -357,6 +366,11 @@ void *_Nullable IAGGraphGetOutputValue(IAGTypeID type);
 IAG_EXPORT
 IAG_REFINED_FOR_SWIFT
 void IAGGraphSetOutputValue(const void *value, IAGTypeID type);
+
+#if defined(__wasi__)
+IAG_EXPORT
+void IAGGraphSetOutputValueC(const void *value, IAGTypeID type);
+#endif
 
 // MARK: Description
 

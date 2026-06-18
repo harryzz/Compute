@@ -11,6 +11,17 @@ IAGClosureStorage IAGRetainClosure(const void *thunk, const void *_Nullable cont
     return IAGClosureStorage((void *)thunk, retained_context);
 }
 
+#if defined(__wasi__)
+IAGClosureStorage IAGRetainClosureC(const void *thunk, const void *_Nullable context) {
+    const void *retained_context = context;
+    if (context) {
+        void *mutable_context = const_cast<void *>(context);
+        retained_context = ::swift::swift_retain(reinterpret_cast<::swift::HeapObject *>(mutable_context));
+    }
+    return IAGClosureStorage((void *)thunk, retained_context);
+}
+#endif
+
 void IAGReleaseClosure(IAGClosureStorage closure) {
     if (closure.context) {
         void *mutable_context = const_cast<void *>(closure.context);

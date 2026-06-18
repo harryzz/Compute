@@ -1,16 +1,23 @@
 import ComputeCxx
 
+#if !arch(wasm32)
 @_silgen_name("IAGGraphSetOutputValue")
 @inline(__always)
 @inlinable
 func IAGGraphSetOutputValue(_ value: UnsafeRawPointer, of type: Metadata)
+#endif
 
 extension Graph {
 
     @inline(__always)
-    @inlinable
     public static func setOutputValue<Value>(_ value: UnsafePointer<Value>) {
+        #if arch(wasm32)
+        // WASI: call the C-imported IAGGraphSetOutputValueC (header-declared) so Swift
+        // uses the C ABI; @_silgen_name mislowers the call on wasm.
+        IAGGraphSetOutputValueC(UnsafeRawPointer(value), Metadata(Value.self))
+        #else
         IAGGraphSetOutputValue(UnsafeRawPointer(value), of: Metadata(Value.self))
+        #endif
     }
 
     @_transparent

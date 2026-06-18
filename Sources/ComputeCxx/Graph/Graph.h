@@ -284,6 +284,13 @@ class Graph {
     const AttributeType &attribute_ref(data::ptr<Node> attribute, const void *_Nullable *_Nullable ref_out) const;
 
     uint32_t intern_type(const swift::metadata *metadata, ClosureFunctionVP<const IAGAttributeType *> make_type);
+    uint32_t register_attribute_type(const swift::metadata *metadata, AttributeType *type);
+#if defined(__wasi__)
+    // WASI: plain C-CC callback path (swiftcall closures don't lower consistently
+    // across swiftc/clang on wasm -> call_indirect signature_mismatch).
+    uint32_t intern_type_c(const swift::metadata *metadata,
+                           const void *(*make)(const void *), const void *ctx);
+#endif
 
     // MARK: Attributes
 

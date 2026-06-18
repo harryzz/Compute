@@ -20,11 +20,34 @@ extension IAGUnownedGraphContextRef {
         type: Metadata,
         makeAttributeType: () -> UnsafePointer<_AttributeType>
     ) -> UInt32 {
+        #if arch(wasm32)
+        // WASI: call the C-imported IAGGraphInternAttributeTypeC (declared in the
+        // ComputeCxx header) so Swift lowers the @convention(c) thunk with the C ABI
+        // (@_silgen_name lowers it with the Swift CC -> call_indirect signature_mismatch).
+        // The Swift closure is invoked in-language via the context pointer.
+        return withoutActuallyEscaping(makeAttributeType) { escaping in
+            withUnsafePointer(to: escaping) { ctxPtr in
+                IAGGraphInternAttributeTypeC(
+                    self,
+                    type,
+                    { ctx in
+                        UnsafeRawPointer(
+                            ctx!.assumingMemoryBound(
+                                to: (() -> UnsafePointer<_AttributeType>).self
+                            ).pointee()
+                        )
+                    },
+                    UnsafeRawPointer(ctxPtr)
+                )
+            }
+        }
+        #else
         return IAGGraphInternAttributeType(
             unsafeBitCast(self, to: UnsafeRawPointer.self),
             type: type,
             makeAttributeType: makeAttributeType
         )
+        #endif
     }
 
 }
@@ -37,10 +60,25 @@ extension String {
 
 }
 
+#if arch(wasm32)
+// WASI: stored closures are invoked LATER by C++, so the synchronous in-language trick
+// (used for intern) doesn't apply. Box the closure (a Swift heap object, so the
+// existing swift_retain/release in IAGRetainClosureC/IAGReleaseClosure own its
+// lifetime) and pass a non-capturing @convention(c) trampoline that re-enters Swift.
+private final class _UpdateBox {
+    let fn: (UnsafeMutableRawPointer, AnyAttribute) -> Void
+    init(_ f: @escaping (UnsafeMutableRawPointer, AnyAttribute) -> Void) { self.fn = f }
+}
+private let _updateTrampoline:
+    @convention(c) (UnsafeMutableRawPointer, AnyAttribute, UnsafeRawPointer?) -> Void = { body, attribute, context in
+        Unmanaged<_UpdateBox>.fromOpaque(context!).takeUnretainedValue().fn(body, attribute)
+    }
+#else
 @_silgen_name("IAGRetainClosure")
 func IAGRetainClosure(
     _ closure: (UnsafeMutableRawPointer, AnyAttribute) -> Void
 ) -> _IAGClosureStorage
+#endif
 
 extension _AttributeType {
 
@@ -109,7 +147,17 @@ extension _AttributeType {
             flags.insert(.hasDestroySelf)
         }
 
+        #if arch(wasm32)
+        let _updateBox = _UpdateBox(update)
+        let retainedUpdate = withExtendedLifetime(_updateBox) {
+            IAGRetainClosureC(
+                unsafeBitCast(_updateTrampoline, to: UnsafeRawPointer.self),
+                Unmanaged.passUnretained(_updateBox).toOpaque()
+            )
+        }
+        #else
         let retainedUpdate = IAGRetainClosure(update)
+        #endif
         let conformance = unsafeBitCast(
             selfType as any _AttributeBody.Type,
             to: ProtocolConformance.self

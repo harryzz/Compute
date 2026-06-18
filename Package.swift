@@ -24,7 +24,7 @@ let package = Package(
         .target(
             name: "Platform",
             cSettings: [
-                .define("_GNU_SOURCE", .when(platforms: [.linux]))
+                .define("_GNU_SOURCE", .when(platforms: [.linux, .wasi]))
             ]
         ),
         .target(
@@ -34,7 +34,7 @@ let package = Package(
             name: "Utilities",
             dependencies: [
                 "Platform",
-                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux])),
+                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux, .wasi])),
             ]
         ),
         .testTarget(
@@ -94,12 +94,12 @@ let package = Package(
                 "Platform",
                 "Utilities",
                 "ComputeCxxSwiftSupport",
-                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux])),
+                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux, .wasi])),
             ],
             cxxSettings: [
                 .headerSearchPath(""),
                 .headerSearchPath("internalInclude"),
-                .define("_GNU_SOURCE", .when(platforms: [.linux])),
+                .define("_GNU_SOURCE", .when(platforms: [.linux, .wasi])),
                 .unsafeFlags([
                     "-static",
                     "-DCOMPILED_WITH_SWIFT",

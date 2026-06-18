@@ -16,7 +16,13 @@ class AttributeType {
   private:
     swift::metadata *_body_metadata;
     swift::metadata *_value_metadata;
+#if defined(__wasi__)
+    // WASI: plain C-CC thunk (Swift passes a @convention(c) trampoline; the swiftcall
+    // closure ABI mismatches across swiftc/clang on wasm).
+    void (*_update)(void *body, IAGAttribute attribute, void *context);
+#else
     void (*_update)(void *body, IAGAttribute attribute, void *context IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift);
+#endif
     void *_update_context;
     const IAGAttributeVTable *_vtable;
     IAGAttributeTypeFlags _flags;
