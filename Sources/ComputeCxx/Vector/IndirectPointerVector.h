@@ -30,7 +30,10 @@ class indirect_pointer_vector {
         NullElement = 0x2,
     };
 
-    uintptr_t _data;
+    uintptr_t _data = 0; // MUST default to 0 (empty): the `= default` ctor would otherwise
+                         // leave it uninitialized, so a freshly-created subgraph's _parents
+                         // reads stale heap; if the garbage has the tag bit set, add_child
+                         // (which iterates child._parents) dereferences a wild pointer.
 
     using vector_type = vector<value_type, 4, size_type>;
 
