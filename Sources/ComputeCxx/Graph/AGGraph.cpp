@@ -462,6 +462,28 @@ void AGGraphMutateAttribute(AGAttribute attribute, AGTypeID type, bool invalidat
                                         AG::ClosureFunctionPV<void, void *>(modify, modify_context), invalidating);
 }
 
+#if defined(__wasi__)
+// WASI: plain-C modify callback (the swiftcall closure mislowers on wasm).
+extern "C" void AGGraphMutateAttributeC(AGAttribute attribute, AGTypeID type, bool invalidating,
+                                        void (*modify)(void *body, const void *context),
+                                        const void *modify_context) {
+    auto attribute_id = AG::AttributeID(attribute);
+    auto node = attribute_id.get_node();
+    if (!node) {
+        AG::precondition_failure("non-direct attribute id: %u", attribute);
+    }
+    attribute_id.validate_data_offset();
+
+    auto subgraph = attribute_id.subgraph();
+    if (!subgraph) {
+        AG::precondition_failure("no graph: %u", attribute);
+    }
+
+    subgraph->graph()->attribute_modify_c(node, *reinterpret_cast<const AG::swift::metadata *>(type), modify,
+                                          modify_context, invalidating);
+}
+#endif
+
 #pragma mark - Value
 
 namespace {
@@ -651,14 +673,26 @@ void AGGraphSetInvalidationCallback(AGGraphRef graph,
     graph_context->set_invalidation_callback(AG::ClosureFunctionAV<void, AGAttribute>(callback, callback_context));
 }
 
+#if defined(__wasi__)
+// WASI: plain-C STORED callback (swiftcall closures mislower on wasm). The Swift side
+// boxes the closure and passes a non-capturing @convention(c) trampoline + the box ptr.
+extern "C" void AGGraphSetInvalidationCallbackC(AGGraphRef graph,
+                                                void (*callback)(AGAttribute, const void *context),
+                                                const void *callback_context) {
+    auto graph_context = AG::Graph::Context::from_cf(graph);
+    graph_context->set_invalidation_callback_c(callback, callback_context);
+}
+#endif
+
 #pragma mark - Cached value
 
 namespace {
 
+template <typename Getter>
 void *read_cached_attribute(size_t hash, const AG::swift::metadata &metadata, const void *body,
                             const AG::swift::metadata &value_metadata, AGCachedValueOptions options,
                             AG::AttributeID owner_id, AGChangedValueFlags *flags_out,
-                            AG::ClosureFunctionCI<uint32_t, AGUnownedGraphContextRef> get_attribute_type_id) {
+                            Getter get_attribute_type_id) {
     auto update = AG::Graph::current_update();
     auto update_stack = update.tag() == 0 ? update.get() : nullptr;
 
@@ -714,6 +748,36 @@ void *AGGraphReadCachedAttribute(size_t hash, AGTypeID type, const void *body, A
     return value;
 }
 
+#if defined(__wasi__)
+// WASI: plain C-CC variant (the swiftcall closure-with-arg/return ABI does not lower
+// consistently across swiftc/clang on wasm -> the @_silgen_name import above mislowers
+// to a signature_mismatch:AGGraphReadCachedAttribute trap on the VStack/layout path).
+// On wasm AG_SWIFT_CC(swift)/AG_SWIFT_CONTEXT are empty, so ClosureFunctionCI already
+// stores a plain-C uint32_t(*)(AGUnownedGraphContextRef, const void*); the only fix
+// needed is a separate symbol the Swift side imports with the C ABI. The closure is
+// invoked SYNCHRONOUSLY inside cache_fetch, but ClosureFunctionCI retains the context
+// (swift_retain), so the Swift side must pass a real heap-boxed closure (not a stack
+// pointer) — see Rule.swift's _CachedAttrBox.
+extern "C" void *AGGraphReadCachedAttributeC(size_t hash, AGTypeID type, const void *body, AGTypeID value_type,
+                                             AGCachedValueOptions options, AGAttribute owner, bool *_Nullable changed_out,
+                                             uint32_t (*closure)(AGUnownedGraphContextRef graph_context,
+                                                                 const void *context),
+                                             const void *closure_context) {
+    auto metadata = reinterpret_cast<const AG::swift::metadata *>(type);
+    auto value_metadata = reinterpret_cast<const AG::swift::metadata *>(value_type);
+    auto owner_id = AG::AttributeID(owner);
+
+    AGChangedValueFlags flags = 0;
+    void *value =
+        read_cached_attribute(hash, *metadata, body, *value_metadata, options, owner_id, &flags,
+                              AG::Subgraph::PlainTypeIDGetter{closure, closure_context});
+    if (changed_out) {
+        *changed_out = flags & AGChangedValueFlagsChanged ? true : false;
+    }
+    return value;
+}
+#endif
+
 void *AGGraphReadCachedAttributeIfExists(size_t hash, AGTypeID type, const void *body, AGTypeID value_type,
                                          AGCachedValueOptions options, AGAttribute owner, bool *_Nullable changed_out) {
 
@@ -722,7 +786,8 @@ void *AGGraphReadCachedAttributeIfExists(size_t hash, AGTypeID type, const void 
     auto owner_id = AG::AttributeID(owner);
 
     AGChangedValueFlags flags = 0;
-    void *value = read_cached_attribute(hash, *metadata, body, *value_metadata, options, owner_id, &flags, nullptr);
+    void *value = read_cached_attribute(hash, *metadata, body, *value_metadata, options, owner_id, &flags,
+                                        AG::ClosureFunctionCI<uint32_t, AGUnownedGraphContextRef>(nullptr));
     if (changed_out) {
         *changed_out = flags & AGChangedValueFlagsChanged ? true : false;
     }
@@ -836,6 +901,17 @@ void AGGraphSetUpdateCallback(AGGraphRef graph,
     auto graph_context = AG::Graph::Context::from_cf(graph);
     graph_context->set_update_callback(AG::ClosureFunctionVV<void>(callback, callback_context));
 }
+
+#if defined(__wasi__)
+// WASI: plain-C STORED callback (swiftcall closures mislower on wasm). The Swift side
+// boxes the closure and passes a non-capturing @convention(c) trampoline + the box ptr.
+extern "C" void AGGraphSetUpdateCallbackC(AGGraphRef graph,
+                                          void (*callback)(const void *context),
+                                          const void *callback_context) {
+    auto graph_context = AG::Graph::Context::from_cf(graph);
+    graph_context->set_update_callback_c(callback, callback_context);
+}
+#endif
 
 AGAttribute AGGraphGetCurrentAttribute() {
     auto update_ptr = AG::Graph::current_update();

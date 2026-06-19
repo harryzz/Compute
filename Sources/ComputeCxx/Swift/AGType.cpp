@@ -216,6 +216,105 @@ bool AGTypeApplyFields2(AGTypeID typeID, AGTypeApplyOptions options,
     }
 }
 
+#if defined(__wasi__)
+// WASI: plain-C callback variants of AGTypeApplyFields/AGTypeApplyFields2. The
+// swiftcall closure ABI (AG_SWIFT_CC(swift)) does not lower consistently across
+// swiftc/clang on wasm (-> signature_mismatch trap), so the Swift side passes a
+// non-capturing @convention(c) thunk + a boxed context and we invoke it plain-C.
+void AGTypeApplyFieldsC(AGTypeID typeID,
+                        void (*apply)(const char *field_name, size_t field_offset,
+                                      AGTypeID field_type, const void *context),
+                        const void *apply_context) {
+    class VisitorC : public AG::swift::metadata_visitor {
+        void (*_body)(const char *, size_t, AGTypeID, const void *);
+        const void *_context;
+
+      public:
+        VisitorC(void (*body)(const char *, size_t, AGTypeID, const void *), const void *context)
+            : _body(body), _context(context) {}
+
+        bool unknown_result() override { return true; }
+        bool visit_field(const AG::swift::metadata &type, const AG::swift::field_record &field,
+                         size_t field_offset, size_t field_size) override {
+            auto mangled_name = field.MangledTypeName.get();
+            auto field_type = type.mangled_type_name_ref(mangled_name, true, nullptr);
+            if (field_type) {
+                _body(field.FieldName.get(), field_offset, AGTypeID(field_type), _context);
+            }
+            return true;
+        }
+    };
+
+    VisitorC visitor(apply, apply_context);
+    auto type = reinterpret_cast<const AG::swift::metadata *>(typeID);
+    type->visit(visitor);
+}
+
+bool AGTypeApplyFields2C(AGTypeID typeID, AGTypeApplyOptions options,
+                         bool (*apply)(const char *field_name, size_t field_offset,
+                                       AGTypeID field_type, const void *context),
+                         const void *apply_context) {
+    class VisitorC : public AG::swift::metadata_visitor {
+        AGTypeApplyOptions _options;
+        bool (*_body)(const char *, size_t, AGTypeID, const void *);
+        const void *_context;
+
+      public:
+        VisitorC(AGTypeApplyOptions options, bool (*body)(const char *, size_t, AGTypeID, const void *),
+                 const void *context)
+            : _options(options), _body(body), _context(context) {}
+
+        bool unknown_result() override { return _options & AGTypeApplyOptionsContinueAfterUnknownField; }
+        bool visit_field(const AG::swift::metadata &type, const AG::swift::field_record &field,
+                         size_t field_offset, size_t field_size) override {
+            auto mangled_name = field.MangledTypeName.get();
+            auto field_type = type.mangled_type_name_ref(mangled_name, true, nullptr);
+            if (!field_type) {
+                return unknown_result();
+            }
+            return _body(field.FieldName.get(), field_offset, AGTypeID(field_type), _context);
+        }
+        bool visit_case(const AG::swift::metadata &type, const AG::swift::field_record &field,
+                        uint32_t index) override {
+            auto mangled_name = field.MangledTypeName.get();
+            auto field_type = type.mangled_type_name_ref(mangled_name, true, nullptr);
+            if (!field_type) {
+                return unknown_result();
+            }
+            return _body(field.FieldName.get(), index, AGTypeID(field_type), _context);
+        }
+    };
+
+    VisitorC visitor(options, apply, apply_context);
+    auto type = reinterpret_cast<const AG::swift::metadata *>(typeID);
+    switch (type->getKind()) {
+    case ::swift::MetadataKind::Class:
+        if (options & AGTypeApplyOptionsEnumerateClassFields) {
+            return type->visit_heap(visitor, AG::LayoutDescriptor::HeapMode::Class);
+        }
+        return false;
+    case ::swift::MetadataKind::Struct:
+        if (!(options & AGTypeApplyOptionsEnumerateClassFields) && !(options & AGTypeApplyOptionsEnumerateEnumCases)) {
+            return type->visit(visitor);
+        }
+        return false;
+    case ::swift::MetadataKind::Enum:
+    case ::swift::MetadataKind::Optional:
+        if (options & AGTypeApplyOptionsEnumerateEnumCases) {
+            return type->visit(visitor);
+        }
+        return false;
+    case ::swift::MetadataKind::Tuple:
+        if (!(options & AGTypeApplyOptionsEnumerateClassFields) && !(options & AGTypeApplyOptionsEnumerateEnumCases)) {
+            return type->visit(visitor);
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+#endif
+
 bool AGTypeApplyEnumData(AGTypeID typeID, void *value,
                          void (*body)(uint32_t tag,
                                       AGTypeID field_type,

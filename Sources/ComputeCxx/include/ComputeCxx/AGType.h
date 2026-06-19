@@ -93,6 +93,23 @@ bool AGTypeApplyFields2(AGTypeID typeID, AGTypeApplyOptions options,
                                                const void *context AG_SWIFT_CONTEXT) AG_SWIFT_CC(swift),
                         const void *apply_context);
 
+#if defined(__wasi__)
+// WASI: plain-C callback variants (the swiftcall closure ABI mislowers across
+// swiftc/clang on wasm -> signature_mismatch). Swift passes a non-capturing
+// @convention(c) thunk + a boxed context; these invoke it with the C ABI.
+AG_EXPORT
+void AGTypeApplyFieldsC(AGTypeID typeID,
+                        void (*apply)(const char *field_name, size_t field_offset,
+                                      AGTypeID field_type, const void *_Nullable context),
+                        const void *apply_context);
+
+AG_EXPORT
+bool AGTypeApplyFields2C(AGTypeID typeID, AGTypeApplyOptions options,
+                         bool (*apply)(const char *field_name, size_t field_offset,
+                                       AGTypeID field_type, const void *_Nullable context),
+                         const void *apply_context);
+#endif
+
 AG_EXPORT
 AG_REFINED_FOR_SWIFT
 bool AGTypeApplyEnumData(AGTypeID typeID, void *value,

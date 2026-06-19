@@ -320,6 +320,13 @@ class Graph {
     void attribute_modify(data::ptr<Node> node, const swift::metadata &type, ClosureFunctionPV<void, void *> modify,
                           bool invalidating);
 
+#if defined(__wasi__)
+    // WASI: plain-C modify callback (swiftcall closure ABI mislowers on wasm).
+    void attribute_modify_c(data::ptr<Node> node, const swift::metadata &type,
+                            void (*modify)(void *body, const void *context), const void *modify_context,
+                            bool invalidating);
+#endif
+
     // MARK: Value
 
     bool value_exists(data::ptr<Node> node);

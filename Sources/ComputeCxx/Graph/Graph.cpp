@@ -1394,6 +1394,35 @@ void Graph::attribute_modify(data::ptr<Node> node, const swift::metadata &metada
     }
 }
 
+#if defined(__wasi__)
+// WASI: identical to attribute_modify but invokes a plain-C callback (the
+// swiftcall closure ABI mislowers across swiftc/clang on wasm -> signature_mismatch).
+void Graph::attribute_modify_c(data::ptr<Node> node, const swift::metadata &metadata,
+                               void (*modify)(void *body, const void *context), const void *modify_context,
+                               bool invalidating) {
+    if (!node->is_self_initialized()) {
+        precondition_failure("no self data: %u", node);
+    }
+
+    const AttributeType &type = attribute_type(node->type_id());
+    if (&type.body_metadata() != &metadata) {
+        precondition_failure("self type mismatch: %u", node);
+    }
+
+    foreach_trace([&node](Trace &trace) { trace.begin_modify(node); });
+
+    void *body = node->get_self(type);
+    modify(body, modify_context);
+
+    foreach_trace([&node](Trace &trace) { trace.end_modify(node); });
+
+    if (invalidating) {
+        node->set_self_modified(true);
+        mark_pending(node, node.get());
+    }
+}
+#endif
+
 void Graph::mark_pending(data::ptr<Node> node_ptr, Node *node) {
     if (!node->is_pending()) {
         foreach_trace([&node_ptr](Trace &trace) { trace.set_pending(node_ptr, true); });

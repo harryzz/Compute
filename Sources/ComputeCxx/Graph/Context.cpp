@@ -102,6 +102,18 @@ void Graph::Context::call_invalidation(AttributeID attribute) {
 
         set_current_update(old_update);
     }
+#if defined(__wasi__)
+    else if (_invalidation_callback_c) {
+        auto old_update = current_update();
+        if (old_update.value() != 0) {
+            set_current_update(old_update.with_tag(true));
+        }
+        _graph->foreach_trace([this, &attribute](Trace &trace) { trace.begin_invalidation(*this, attribute); });
+        _invalidation_callback_c(attribute, _invalidation_callback_c_context);
+        _graph->foreach_trace([this, &attribute](Trace &trace) { trace.end_invalidation(*this, attribute); });
+        set_current_update(old_update);
+    }
+#endif
 }
 
 void Graph::Context::call_update() {
@@ -121,6 +133,17 @@ void Graph::Context::call_update() {
 
         // ~UpdateStack()
     }
+#if defined(__wasi__)
+    else if (_update_callback_c) {
+        auto update =
+            UpdateStack(_graph, AGGraphUpdateOptions(AGGraphUpdateOptionsInitializeCleared |
+                                                     AGGraphUpdateOptionsEndDeferringSubgraphInvalidationOnExit));
+        _graph->foreach_trace([this](Trace &trace) { trace.begin_update(*this); });
+        _update_callback_c(_update_callback_c_context);
+        _graph->foreach_trace([this](Trace &trace) { trace.end_update(*this); });
+        // ~UpdateStack()
+    }
+#endif
 }
 
 } // namespace AG

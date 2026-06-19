@@ -54,14 +54,53 @@ func AGGraphWithMainThreadHandler(
     mainThreadHandler: (() -> Void) -> Void
 )
 
+#if arch(wasm32)
+// WASI: AGGraphSetUpdate/InvalidationCallback take swiftcall closures that mislower on
+// wasm (-> signature_mismatch). These are STORED callbacks (invoked later by C++), so
+// box the Swift closure (heap object) and pass a non-capturing @convention(c) trampoline
+// + the box pointer to the plain-C *C setters. The box is passRetained so it lives for
+// the graph's lifetime (the host registers these once; replacing them would leak the old
+// box, which is acceptable for a process-lifetime graph host).
+private final class _GraphUpdateBox {
+    let fn: () -> Void
+    init(_ f: @escaping () -> Void) { self.fn = f }
+}
+private let _graphUpdateTrampoline: @convention(c) (UnsafeRawPointer) -> Void = { ctx in
+    Unmanaged<_GraphUpdateBox>.fromOpaque(ctx).takeUnretainedValue().fn()
+}
+private final class _GraphInvalidationBox {
+    let fn: (AnyAttribute) -> Void
+    init(_ f: @escaping (AnyAttribute) -> Void) { self.fn = f }
+}
+private let _graphInvalidationTrampoline: @convention(c) (AnyAttribute, UnsafeRawPointer) -> Void = { attr, ctx in
+    Unmanaged<_GraphInvalidationBox>.fromOpaque(ctx).takeUnretainedValue().fn(attr)
+}
+#endif
+
 extension Graph {
 
     public func onUpdate(_ handler: @escaping () -> Void) {
+        #if arch(wasm32)
+        AGGraphSetUpdateCallbackC(
+            self,
+            _graphUpdateTrampoline,
+            Unmanaged.passRetained(_GraphUpdateBox(handler)).toOpaque()
+        )
+        #else
         AGGraphSetUpdateCallback(unsafeBitCast(self, to: UnsafeRawPointer.self), callback: handler)
+        #endif
     }
 
     public func onInvalidation(_ handler: @escaping (AnyAttribute) -> Void) {
+        #if arch(wasm32)
+        AGGraphSetInvalidationCallbackC(
+            self,
+            _graphInvalidationTrampoline,
+            Unmanaged.passRetained(_GraphInvalidationBox(handler)).toOpaque()
+        )
+        #else
         AGGraphSetInvalidationCallback(unsafeBitCast(self, to: UnsafeRawPointer.self), callback: handler)
+        #endif
     }
 
     public func withDeadline<T>(_ deadline: UInt64, _ body: () -> T) -> T {
@@ -88,11 +127,18 @@ extension Graph {
     }
 
     public func withMainThreadHandler(_ mainThreadHandler: (() -> Void) -> Void, do body: () -> Void) {
+        #if arch(wasm32)
+        // WASI single-threaded: AGGraphWithMainThreadHandler's swiftcall closures mislower
+        // on wasm. There is only one thread, so run body directly (the main handler exists
+        // only to hop work onto the main thread).
+        body()
+        #else
         AGGraphWithMainThreadHandler(
             unsafeBitCast(self, to: UnsafeRawPointer.self),
             body: body,
             mainThreadHandler: mainThreadHandler
         )
+        #endif
     }
 
 }

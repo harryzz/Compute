@@ -39,12 +39,30 @@ extension AnyAttribute {
             let modify: (UnsafeMutableRawPointer) -> Void = { pointer in
                 escapingMutator(&pointer.assumingMemoryBound(to: Body.self).pointee)
             }
+            #if arch(wasm32)
+            // WASI: the swiftcall modify closure mislowers on wasm; route through the
+            // C-imported AGGraphMutateAttributeC with a non-capturing @convention(c)
+            // trampoline. `modify` is invoked synchronously, so pass it by pointer.
+            withUnsafePointer(to: modify) { ctxPtr in
+                AGGraphMutateAttributeC(
+                    self,
+                    Metadata(type),
+                    invalidating,
+                    { body, ctx in
+                        ctx.assumingMemoryBound(to: ((UnsafeMutableRawPointer) -> Void).self)
+                            .pointee(body)
+                    },
+                    UnsafeRawPointer(ctxPtr)
+                )
+            }
+            #else
             AGGraphMutateAttribute(
                 self,
                 type: Metadata(type),
                 invalidating: invalidating,
                 modify: modify
             )
+            #endif
         }
     }
 

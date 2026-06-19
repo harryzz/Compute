@@ -211,6 +211,14 @@ void AGGraphMutateAttribute(AGAttribute attribute, AGTypeID type, bool invalidat
                             void (*modify)(void *body, const void *context AG_SWIFT_CONTEXT) AG_SWIFT_CC(swift),
                             const void *modify_context);
 
+#if defined(__wasi__)
+// WASI: plain-C modify callback (the swiftcall closure ABI mislowers on wasm).
+AG_EXPORT
+void AGGraphMutateAttributeC(AGAttribute attribute, AGTypeID type, bool invalidating,
+                             void (*modify)(void *body, const void *context),
+                             const void *modify_context);
+#endif
+
 // MARK: Value
 
 AG_EXPORT
@@ -270,6 +278,14 @@ void AGGraphSetInvalidationCallback(AGGraphRef graph,
                                         AG_SWIFT_CC(swift),
                                     const void *callback_context);
 
+#if defined(__wasi__)
+// WASI: plain-C STORED invalidation callback (swiftcall closures mislower on wasm).
+AG_EXPORT
+void AGGraphSetInvalidationCallbackC(AGGraphRef graph,
+                                     void (*callback)(AGAttribute attribute, const void *context),
+                                     const void *callback_context);
+#endif
+
 // MARK: Cached value
 
 CF_EXPORT
@@ -279,6 +295,18 @@ void *AGGraphReadCachedAttribute(size_t hash, AGTypeID type, const void *body, A
                                  uint32_t (*closure)(AGUnownedGraphContextRef graph_context,
                                                      const void *context AG_SWIFT_CONTEXT) AG_SWIFT_CC(swift),
                                  const void *closure_context);
+
+#if defined(__wasi__)
+// WASI: plain C-CC variant (declared in the header so Swift imports it with the C ABI;
+// the @_silgen_name import lowers the closure arg with the Swift CC and traps). See the
+// implementation in AGGraph.cpp and the Swift routing in Rule.swift.
+CF_EXPORT
+void *AGGraphReadCachedAttributeC(size_t hash, AGTypeID type, const void *body, AGTypeID value_type,
+                                  AGCachedValueOptions options, AGAttribute owner, bool *_Nullable changed_out,
+                                  uint32_t (*_Nonnull closure)(AGUnownedGraphContextRef graph_context,
+                                                               const void *_Nullable context),
+                                  const void *_Nullable closure_context);
+#endif
 
 CF_EXPORT
 CF_REFINED_FOR_SWIFT
@@ -346,6 +374,14 @@ AG_REFINED_FOR_SWIFT
 void AGGraphSetUpdateCallback(AGGraphRef graph,
                               void (*callback)(const void *context AG_SWIFT_CONTEXT) AG_SWIFT_CC(swift),
                               const void *callback_context);
+
+#if defined(__wasi__)
+// WASI: plain-C STORED update callback (swiftcall closures mislower on wasm).
+AG_EXPORT
+void AGGraphSetUpdateCallbackC(AGGraphRef graph,
+                               void (*callback)(const void *context),
+                               const void *callback_context);
+#endif
 
 AG_EXPORT
 AG_REFINED_FOR_SWIFT

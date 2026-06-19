@@ -725,6 +725,19 @@ void Subgraph::update(AGAttributeFlags mask) {
 
 data::ptr<Node> Subgraph::cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
                                       ClosureFunctionCI<uint32_t, AGUnownedGraphContextRef> get_attribute_type_id) {
+    return cache_fetch_tmpl(hash, metadata, body, get_attribute_type_id);
+}
+
+#if defined(__wasi__)
+data::ptr<Node> Subgraph::cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
+                                      PlainTypeIDGetter get_attribute_type_id) {
+    return cache_fetch_tmpl(hash, metadata, body, get_attribute_type_id);
+}
+#endif
+
+template <typename Getter>
+data::ptr<Node> Subgraph::cache_fetch_tmpl(size_t hash, const swift::metadata &metadata, const void *body,
+                                           Getter get_attribute_type_id) {
     if (_cache == nullptr) {
         _cache = alloc_bytes(sizeof(NodeCache), 7).unsafe_cast<NodeCache>();
         new (_cache.get()) NodeCache();

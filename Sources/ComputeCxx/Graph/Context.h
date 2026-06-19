@@ -25,6 +25,15 @@ class Graph::Context {
     ClosureFunctionAV<void, AGAttribute> _invalidation_callback = {nullptr, nullptr};
     ClosureFunctionVV<void> _update_callback = {nullptr, nullptr};
 
+#if defined(__wasi__)
+    // WASI: the swiftcall closure ABI mislowers on wasm, so store STORED callbacks as
+    // plain-C fn + context (set via the *C entry points) and invoke them plain-C.
+    void (*_update_callback_c)(const void *context) = nullptr;
+    const void *_update_callback_c_context = nullptr;
+    void (*_invalidation_callback_c)(AGAttribute attribute, const void *context) = nullptr;
+    const void *_invalidation_callback_c_context = nullptr;
+#endif
+
     uint64_t _deadline = UINT64_MAX;
     uint64_t _graph_version;
     bool _needs_update;
@@ -50,6 +59,17 @@ class Graph::Context {
         _invalidation_callback = callback;
     }
     void set_update_callback(AG::ClosureFunctionVV<void> callback) { _update_callback = callback; }
+
+#if defined(__wasi__)
+    void set_update_callback_c(void (*cb)(const void *), const void *ctx) {
+        _update_callback_c = cb;
+        _update_callback_c_context = ctx;
+    }
+    void set_invalidation_callback_c(void (*cb)(AGAttribute, const void *), const void *ctx) {
+        _invalidation_callback_c = cb;
+        _invalidation_callback_c_context = ctx;
+    }
+#endif
 
     uint64_t deadline() const { return _deadline; };
     void set_deadline(uint64_t deadline);
