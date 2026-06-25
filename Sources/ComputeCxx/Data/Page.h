@@ -20,7 +20,7 @@ struct page {
     uint16_t bytes_list;
     uint16_t const_bytes_list;
 };
-static_assert(sizeof(page) == 0x18);
+static_assert(sizeof(page) == (sizeof(void *) == 8 ? 0x18 : 20)); // [wasm32] 32-bit ABI: 1 raw ptr (zone*) shrinks 8->4
 
 class page_ptr_list {
   public:

@@ -87,8 +87,11 @@ class Graph {
     vector<Trace *, 0, uint32_t> _traces;
 
     // Main thread handler
-    MainHandler _Nullable _main_handler;
-    const void *_Nullable _main_handler_context;
+    // [wandr] MUST be initialized: has_main_handler() keys off `_main_handler != nullptr`. The ctor
+    // never sets them, so without these initializers a fresh Graph holds heap garbage -> has_main_handler
+    // reads true -> call_main_handler invokes a garbage function pointer ("uninitialized element" trap).
+    MainHandler _Nullable _main_handler = nullptr;
+    const void *_Nullable _main_handler_context = nullptr;
 
     // Metrics
     uint64_t _num_nodes = 0;
@@ -98,20 +101,24 @@ class Graph {
     uint64_t _num_value_bytes = 0;
 
     // Trace recorder
-    TraceRecorder *_trace_recorder;
+    // [wandr] MUST be initialized: read as a presence check `if (_trace_recorder)`; the ctor never
+    // sets it, so a fresh Graph on a churned heap holds garbage -> trace checks deref it.
+    TraceRecorder *_trace_recorder = nullptr;
 
     // Tree
     std::unique_ptr<std::unordered_map<Subgraph *, TreeDataElement>> _tree_data_elements_by_subgraph;
-    KeyTable *_Nullable _keys;
+    // [wandr] MUST be initialized: lazy-init keys off `_keys == nullptr` + ~Graph does `if (_keys) delete`;
+    // the ctor never sets it, so garbage on a churned heap skips init / deletes a garbage pointer.
+    KeyTable *_Nullable _keys = nullptr;
 
     // Subgraphs
     vector<Subgraph *, 0, uint32_t> _subgraphs;
     vector<Subgraph *, 0, uint32_t> _subgraphs_with_cached_nodes;
     vector<Subgraph *, 2, uint32_t> _invalidating_subgraphs;
-    bool _deferring_subgraph_invalidation;
+    bool _deferring_subgraph_invalidation = false; // [wandr] uninit -> garbage-true -> invalidate wrongly deferred (leak)
 
     // Threads
-    bool _needs_update;
+    bool _needs_update = false; // [wandr] was uninitialized
     uint32_t _ref_count = 1;
     pthread_t _current_update_thread = 0;
 
@@ -284,6 +291,10 @@ class Graph {
     const AttributeType &attribute_ref(data::ptr<Node> attribute, const void *_Nullable *_Nullable ref_out) const;
 
     uint32_t intern_type(const swift::metadata *metadata, ClosureFunctionVP<const IAGAttributeType *> make_type);
+#if defined(__wasi__)
+    // [wasm port] plain-C callback variant (swiftcall closure mislowers across the C boundary on wasm)
+    uint32_t intern_type_c(const swift::metadata *metadata, const void *(*make)(const void *), const void *ctx);
+#endif
 
     // MARK: Attributes
 

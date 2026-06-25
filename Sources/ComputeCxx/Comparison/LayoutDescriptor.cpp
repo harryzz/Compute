@@ -558,7 +558,7 @@ bool compare_indirect(ValueLayout *layout_ref, const swift::metadata &enum_type,
 
         ValueLayout layout = *layout_ref == ValueLayoutTrivial ? nullptr : *layout_ref;
 
-        static_assert(sizeof(::swift::HeapObject) == 0x10);
+        static_assert(sizeof(::swift::HeapObject) == 2 * sizeof(void *)); // [wasm32] 2 words: isa + 1 refcount word (16 on 64-bit, 8 on wasm32)
         size_t alignment_mask = layout_type.getValueWitnesses()->getAlignmentMask();
         size_t offset = (sizeof(::swift::HeapObject) + alignment_mask) & ~alignment_mask;
         unsigned char *lhs_value = (unsigned char *)(*(unsigned char **)lhs_copy + offset);

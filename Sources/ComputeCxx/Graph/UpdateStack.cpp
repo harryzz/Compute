@@ -22,7 +22,7 @@ Graph::UpdateStack::UpdateStack(Graph *graph, IAGGraphUpdateOptions options)
 
     if (graph->_deferring_subgraph_invalidation == false) {
         graph->_deferring_subgraph_invalidation = true;
-        _options = IAGGraphUpdateOptions(_options & IAGGraphUpdateOptionsEndDeferringSubgraphInvalidationOnExit);
+        _options = IAGGraphUpdateOptions(_options | IAGGraphUpdateOptionsEndDeferringSubgraphInvalidationOnExit); // [wandr] was & (cleared the reset-on-exit flag -> _deferring stuck true after first update -> invalidate leaks)
     }
 
     Graph::set_current_update(util::tagged_ptr<UpdateStack>(this, options & IAGGraphUpdateOptionsInitializeCleared));

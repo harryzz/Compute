@@ -15,6 +15,12 @@ IAG_EXPORT
 IAG_REFINED_FOR_SWIFT
 IAGClosureStorage IAGRetainClosure(const void *thunk, const void *_Nullable context);
 
+#if defined(__wasi__)
+// [wasm port] non-refined C variant; the swiftcall closure arg above traps on wasm call_indirect.
+IAG_EXPORT
+IAGClosureStorage IAGRetainClosureC(const void *thunk, const void *_Nullable context);
+#endif
+
 IAG_EXPORT
 IAG_REFINED_FOR_SWIFT
 void IAGReleaseClosure(IAGClosureStorage closure);

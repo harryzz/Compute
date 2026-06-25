@@ -37,7 +37,7 @@ struct Graph::TreeValue {
     uint32_t flags;
     TreeValueID next;
 };
-static_assert(sizeof(Graph::TreeValue) == 0x18);
+static_assert(sizeof(Graph::TreeValue) == (sizeof(void *) == 8 ? 0x18 : 20)); // [wasm32] 1 raw ptr (type*) 8->4
 
 } // namespace IAG
 

@@ -43,7 +43,7 @@ struct Graph::TreeElement {
 
     Graph::TreeValueID first_value;
 };
-static_assert(sizeof(Graph::TreeElement) == 0x20);
+static_assert(sizeof(Graph::TreeElement) == (sizeof(void *) == 8 ? 0x20 : 28)); // [wasm32] 1 raw ptr (type*) 8->4
 
 } // namespace IAG
 

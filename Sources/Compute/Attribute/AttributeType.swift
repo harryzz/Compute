@@ -14,10 +14,25 @@ extension String {
 
 }
 
+#if arch(wasm32)
+// [wasm port] stored closures are invoked LATER by C++, so the synchronous in-language trick (used
+// for intern) doesn't apply. Box the closure (a Swift heap object — swift_retain/release in
+// IAGRetainClosureC/IAGReleaseClosure own its lifetime) and pass a non-capturing @convention(c)
+// trampoline that re-enters Swift.
+private final class _UpdateBox {
+    let fn: (UnsafeMutableRawPointer, AnyAttribute) -> Void
+    init(_ f: @escaping (UnsafeMutableRawPointer, AnyAttribute) -> Void) { self.fn = f }
+}
+private let _updateTrampoline:
+    @convention(c) (UnsafeMutableRawPointer, AnyAttribute, UnsafeRawPointer?) -> Void = { body, attribute, context in
+        Unmanaged<_UpdateBox>.fromOpaque(context!).takeUnretainedValue().fn(body, attribute)
+    }
+#else
 @_silgen_name("IAGRetainClosure")
 func IAGRetainClosure(
     _ closure: (UnsafeMutableRawPointer, AnyAttribute) -> Void
 ) -> _IAGClosureStorage
+#endif
 
 extension _AttributeType {
 
@@ -86,7 +101,17 @@ extension _AttributeType {
             flags.insert(.hasDestroySelf)
         }
 
+        #if arch(wasm32)
+        let _updateBox = _UpdateBox(update)
+        let retainedUpdate = withExtendedLifetime(_updateBox) {
+            IAGRetainClosureC(
+                unsafeBitCast(_updateTrampoline, to: UnsafeRawPointer.self),
+                Unmanaged.passUnretained(_updateBox).toOpaque()
+            )
+        }
+        #else
         let retainedUpdate = IAGRetainClosure(update)
+        #endif
         let conformance = unsafeBitCast(
             selfType as any _AttributeBody.Type,
             to: ProtocolConformance.self

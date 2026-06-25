@@ -1,11 +1,38 @@
 import ComputeCxx
 
+#if arch(wasm32)
+// [wasm port] IAGGraphInternAttributeType takes a swiftcall closure (makeAttributeType) that
+// mislowers on wasm (@_silgen_name -> call_indirect signature_mismatch). Route through the
+// header-declared plain-C IAGGraphInternAttributeTypeC with a non-capturing @convention(c) thunk;
+// the closure is invoked synchronously, so pass it by stack pointer.
+public func internAttributeType(
+    ctx: UnownedGraphContext,
+    body: Metadata,
+    makeAttributeType: () -> UnsafePointer<_AttributeType>
+) -> UInt32 {
+    return withoutActuallyEscaping(makeAttributeType) { escaping in
+        withUnsafePointer(to: escaping) { ctxPtr in
+            IAGGraphInternAttributeTypeC(
+                ctx,
+                body,
+                { c in
+                    UnsafeRawPointer(
+                        c!.assumingMemoryBound(to: (() -> UnsafePointer<_AttributeType>).self).pointee()
+                    )
+                },
+                UnsafeRawPointer(ctxPtr)
+            )
+        }
+    }
+}
+#else
 @_silgen_name("IAGGraphInternAttributeType")
 public func internAttributeType(
     ctx: UnownedGraphContext,
     body: Metadata,
     makeAttributeType: () -> UnsafePointer<_AttributeType>
 ) -> UInt32
+#endif
 
 extension Graph {
     static func typeIndex(
@@ -41,17 +68,23 @@ extension Graph {
     }
 }
 
+#if !arch(wasm32)
 @_silgen_name("IAGGraphSetOutputValue")
 @inline(__always)
 @inlinable
 func IAGGraphSetOutputValue(_ value: UnsafeRawPointer, of type: Metadata)
+#endif
 
 extension Graph {
 
     @inline(__always)
-    @inlinable
     public static func setOutputValue<Value>(_ value: UnsafePointer<Value>) {
+        #if arch(wasm32)
+        // [wasm port] @_silgen_name mislowers on wasm; use the header-declared plain-C variant.
+        IAGGraphSetOutputValueC(UnsafeRawPointer(value), Metadata(Value.self))
+        #else
         IAGGraphSetOutputValue(UnsafeRawPointer(value), of: Metadata(Value.self))
+        #endif
     }
 
     @_transparent

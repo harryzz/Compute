@@ -187,6 +187,17 @@ uint32_t IAGGraphInternAttributeType(IAGUnownedGraphContextRef unowned_graph, IA
         metadata, IAG::ClosureFunctionVP<const IAGAttributeType *>(make_attribute_type, make_attribute_type_context));
 }
 
+#if defined(__wasi__)
+// [wasm port] plain C-CC callback entry; Swift keeps the closure call in-language and passes a
+// non-capturing @convention(c) thunk + a context pointer.
+extern "C" uint32_t IAGGraphInternAttributeTypeC(IAGUnownedGraphContextRef unowned_graph, IAGTypeID type,
+                                                 const void *(*make)(const void *), const void *ctx) {
+    auto metadata = reinterpret_cast<const IAG::swift::metadata *>(type);
+    IAG::Graph *graph = reinterpret_cast<IAG::Graph *>(unowned_graph);
+    return graph->intern_type_c(metadata, make, ctx);
+}
+#endif
+
 void IAGGraphVerifyType(IAGAttribute attribute, IAGTypeID type) {
     auto attribute_id = IAG::AttributeID(attribute);
     attribute_id.validate_data_offset();
@@ -898,6 +909,13 @@ void IAGGraphSetOutputValue(const void *value, IAGTypeID type) {
     auto metadata = reinterpret_cast<const IAG::swift::metadata *>(type);
     graph->value_set_internal(frame.attribute, *frame.attribute.get(), value, *metadata);
 }
+
+#if defined(__wasi__)
+// [wasm port] non-refined C variant so Swift imports it with the C ABI; delegates.
+extern "C" void IAGGraphSetOutputValueC(const void *value, IAGTypeID type) {
+    IAGGraphSetOutputValue(value, type);
+}
+#endif
 
 #pragma mark - Trace
 

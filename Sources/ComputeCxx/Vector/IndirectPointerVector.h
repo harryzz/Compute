@@ -30,7 +30,9 @@ class indirect_pointer_vector {
         NullElement = 0x2,
     };
 
-    uintptr_t _data;
+    uintptr_t _data = 0; // [wandr] MUST be initialized: 0 == empty. Without this, `= default` leaves it
+                         // indeterminate; a fresh Subgraph's _parents then holds heap garbage (works on a
+                         // zeroed heap, crashes under heap reuse) -> bogus parent -> UAF-looking fault.
 
     using vector_type = vector<value_type, 4, size_type>;
 

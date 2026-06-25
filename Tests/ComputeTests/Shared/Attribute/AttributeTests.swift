@@ -1,3 +1,6 @@
+#if canImport(Glibc)
+import Glibc
+#endif
 import Testing
 
 struct Triple<A, B, C> {

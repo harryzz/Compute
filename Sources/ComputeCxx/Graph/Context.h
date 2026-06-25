@@ -26,9 +26,9 @@ class Graph::Context {
     ClosureFunctionVV<void> _update_callback = {nullptr, nullptr};
 
     uint64_t _deadline = UINT64_MAX;
-    uint64_t _graph_version;
-    bool _needs_update;
-    bool _invalidated;
+    uint64_t _graph_version = 0; // [wandr] was uninitialized
+    bool _needs_update = false; // [wandr] was uninitialized
+    bool _invalidated = false; // [wandr] was uninitialized
 
     void call_invalidation(AttributeID attribute);
 

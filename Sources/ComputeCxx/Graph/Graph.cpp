@@ -235,7 +235,7 @@ void Graph::add_subgraph(Subgraph &subgraph) {
 
 void Graph::remove_subgraph(Subgraph &subgraph) {
     auto iter = std::remove(_subgraphs.begin(), _subgraphs.end(), &subgraph);
-    _subgraphs.erase(iter);
+    _subgraphs.erase(iter, _subgraphs.end());
 
     if (auto map = _tree_data_elements_by_subgraph.get()) {
         auto iter = map->find(&subgraph);
@@ -247,7 +247,7 @@ void Graph::remove_subgraph(Subgraph &subgraph) {
     if (subgraph.has_cached_nodes()) {
         subgraph.set_has_cached_nodes(false);
         auto iter = std::remove(_subgraphs_with_cached_nodes.begin(), _subgraphs_with_cached_nodes.end(), &subgraph);
-        _subgraphs_with_cached_nodes.erase(iter);
+        _subgraphs_with_cached_nodes.erase(iter, _subgraphs_with_cached_nodes.end());
     }
 
     _num_subgraphs -= 1;
@@ -343,6 +343,39 @@ uint32_t Graph::intern_type(const swift::metadata *metadata, ClosureFunctionVP<c
 
     return type_id;
 }
+
+#if defined(__wasi__)
+// [wasm port] same logic as intern_type, but invokes a plain-C callback (no swiftcall closure).
+uint32_t Graph::intern_type_c(const swift::metadata *metadata, const void *(*make)(const void *), const void *ctx) {
+    uint32_t type_id = uint32_t(reinterpret_cast<uintptr_t>(_interned_types.lookup(metadata, nullptr)));
+    if (type_id) {
+        return type_id;
+    }
+
+    AttributeType *type = (AttributeType *)make(ctx);
+    type->init_body_offset();
+
+    static bool prefetch_layouts = []() -> bool {
+        char *result = getenv("IAG_PREFETCH_LAYOUTS");
+        if (result) {
+            return atoi(result) != 0;
+        }
+        return false;
+    }();
+    if (prefetch_layouts) {
+        type->fetch_layout();
+    }
+
+    type_id = _types.size();
+    if (type_id >= 0xffffff) {
+        precondition_failure("overflowed max type id: %u", type_id);
+    }
+    _types.push_back(std::unique_ptr<AttributeType, AttributeType::deleter>(type));
+    _interned_types.insert(metadata, reinterpret_cast<void *>(uintptr_t(type_id)));
+
+    return type_id;
+}
+#endif
 
 #pragma mark - Attributes
 
@@ -2011,7 +2044,7 @@ void Graph::remove_trace(uint64_t trace_id) {
         Trace *trace = *iter;
         trace->end_trace(*this);
         trace->trace_removed();
-        _traces.erase(iter);
+        _traces.erase(iter, _traces.end());
     }
 }
 

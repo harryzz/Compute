@@ -1,3 +1,6 @@
+#if canImport(Glibc)
+import Glibc
+#endif
 import Foundation
 import Testing
 import _ComputeTestSupport

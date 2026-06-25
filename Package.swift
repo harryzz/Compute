@@ -35,7 +35,7 @@ let package = Package(
             name: "Utilities",
             dependencies: [
                 "Platform",
-                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux])),
+                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux, .wasi])),
             ]
         ),
         .testTarget(
@@ -96,7 +96,7 @@ let package = Package(
                 "Platform",
                 "Utilities",
                 "ComputeCxxSwiftSupport",
-                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux])),
+                .target(name: "SwiftCorelibsCoreFoundation", condition: .when(platforms: [.linux, .wasi])),
             ],
             cxxSettings: [
                 .headerSearchPath(""),

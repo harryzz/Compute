@@ -46,11 +46,16 @@ std::unique_ptr<void, table::malloc_zone_deleter> table::alloc_persistent(size_t
 table::table() {
     constexpr vm_size_t initial_size = 32 * pages_per_map * page_size;
 
-#if TARGET_OS_MAC
+#if TARGET_OS_MAC || defined(__wasi__)
+    // [wasm port] WASI: macOS-shaped anonymous mmap (wasi-libc emulated mman honors
+    // MAP_PRIVATE|MAP_ANON); no memfd_create / MAP_SHARED (unsupported on wasi).
     void *region = mmap(nullptr, initial_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (region == MAP_FAILED) {
         precondition_failure("memory allocation failure (%u bytes, %u)", initial_size, errno);
     }
+#if defined(__wasi__)
+    memset(region, 0, initial_size); // [wasm port] wasi emulated mmap is NOT zeroed
+#endif
 #else
     _vm_region_fd = memfd_create("IAGGraphVMRegion", MFD_CLOEXEC);
     if (_vm_region_fd < 0) {
@@ -82,7 +87,7 @@ table::table() {
 }
 
 table::~table() {
-#if !TARGET_OS_MAC
+#if !TARGET_OS_MAC && !defined(__wasi__)
     close(_vm_region_fd);
 #endif
     if (_malloc_zone) {
@@ -98,13 +103,24 @@ void table::unlock() { platform_lock_unlock(&_lock); }
 
 void table::grow_region() {
     uint64_t new_size = 4 * _vm_region_size;
+    if (getenv("IAG_LOG_GROW")) { fprintf(stderr, "[zone grow] %u -> %llu bytes\n", _vm_region_size, (unsigned long long)new_size); }
 
     // Check size does not exceed 32 bits
     if ((uint32_t)new_size <= _vm_region_size) {
         precondition_failure("exhausted data space");
     }
 
-#if TARGET_OS_MAC
+#if defined(__wasi__)
+    // [wasm port] WASI: no vm_remap/MAP_SHARED. Fresh bigger anonymous region + memcpy the old
+    // contents in. Old mapping retained in _remapped_regions; ptr<T> is offset-based.
+    // NOTE: unlike Linux memfd+MAP_SHARED, this leaves OLD and NEW as divergent copies after a grow.
+    void *new_region = mmap(nullptr, new_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (new_region == MAP_FAILED) {
+        precondition_failure("memory allocation failure (%u bytes, %u)", new_size, errno);
+    }
+    memset(reinterpret_cast<char *>(new_region) + _vm_region_size, 0, new_size - _vm_region_size);
+    memcpy(new_region, reinterpret_cast<void *>(_vm_region_base_address), _vm_region_size);
+#elif TARGET_OS_MAC
     void *new_region = mmap(nullptr, new_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (new_region == MAP_FAILED) {
         precondition_failure("memory allocation failure (%u bytes, %u)", new_size, errno);
@@ -280,7 +296,11 @@ void table::make_pages_reusable(uint32_t page_index, bool reusable) {
 #else
     int advice = reusable ? MADV_FREE : MADV_NORMAL;
 #endif
+#if !defined(__wasi__)
     madvise(mapped_pages_address, mapped_pages_size, advice);
+#else
+    (void)mapped_pages_address; (void)mapped_pages_size; (void)advice; // [wasm port] no madvise on wasi
+#endif
 
     static bool unmap_reusable = []() -> bool {
         char *result = getenv("IAG_UNMAP_REUSABLE");
