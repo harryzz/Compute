@@ -69,7 +69,7 @@ extension Metadata {
                 body(fieldName, fieldOffset, fieldType.type)
             }).toOpaque()
             defer { Unmanaged<_WandrFieldApplyBoolBox>.fromOpaque(box).release() }
-            return __IAGTypeApplyFields2(
+            return IAGTypeApplyFields2C(
                 self, options,
                 { name, offset, ty, c in
                     Unmanaged<_WandrFieldApplyBoolBox>.fromOpaque(c).takeUnretainedValue().f(name, offset, ty)

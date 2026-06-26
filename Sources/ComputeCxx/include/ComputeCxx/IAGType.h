@@ -93,6 +93,16 @@ bool IAGTypeApplyFields2(IAGTypeID typeID, IAGTypeApplyOptions options,
                                                const void *context IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift),
                         const void *apply_context);
 
+#if defined(__wasi__)
+// [wasm] plain-C entry for IAGTypeApplyFields2 (see IAGType.cpp): the callback uses the C calling
+// convention so Swift can pass a @convention(c) thunk that matches it.
+IAG_EXPORT
+bool IAGTypeApplyFields2C(IAGTypeID typeID, IAGTypeApplyOptions options,
+                         bool (*_Nonnull apply)(const char *field_name, size_t field_offset,
+                                                IAGTypeID field_type, const void *context),
+                         const void *apply_context);
+#endif
+
 IAG_EXPORT
 IAG_REFINED_FOR_SWIFT
 bool IAGTypeApplyEnumData(IAGTypeID typeID, void *value,

@@ -216,6 +216,31 @@ bool IAGTypeApplyFields2(IAGTypeID typeID, IAGTypeApplyOptions options,
     }
 }
 
+#if defined(__wasi__)
+// [wasm] IAGTypeApplyFields2's callback is IAG_SWIFT_CC(swift); the @convention(c) thunk Swift can
+// actually pass doesn't match clang's swiftcall lowering on wasm (indirect-call trap). Bridge through
+// a plain-C entry: a swiftcc C++ trampoline (clang-to-clang, so it matches the ClosureFunction call)
+// forwards synchronously to the plain-C callback.
+namespace {
+struct ApplyFields2Tramp {
+    bool (*fn)(const char *, size_t, IAGTypeID, const void *);
+    const void *ctx;
+};
+static bool apply_fields2_tramp(const char *name, size_t offset, IAGTypeID type,
+                                const void *c IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift) {
+    auto *tr = reinterpret_cast<const ApplyFields2Tramp *>(c);
+    return tr->fn(name, offset, type, tr->ctx);
+}
+} // namespace
+extern "C" bool IAGTypeApplyFields2C(IAGTypeID typeID, IAGTypeApplyOptions options,
+                                     bool (*apply)(const char *field_name, size_t field_offset,
+                                                   IAGTypeID field_type, const void *context),
+                                     const void *apply_context) {
+    ApplyFields2Tramp tr{apply, apply_context};
+    return IAGTypeApplyFields2(typeID, options, apply_fields2_tramp, &tr);
+}
+#endif
+
 bool IAGTypeApplyEnumData(IAGTypeID typeID, void *value,
                          void (*body)(uint32_t tag,
                                       IAGTypeID field_type,
