@@ -64,17 +64,19 @@ extension Metadata {
         -> Bool
     {
         #if arch(wasm32)
-        return withoutActuallyEscaping(body) { body in
-            let box = Unmanaged.passRetained(_WandrFieldApplyBoolBox { fieldName, fieldOffset, fieldType in
-                body(fieldName, fieldOffset, fieldType.type)
-            }).toOpaque()
-            defer { Unmanaged<_WandrFieldApplyBoolBox>.fromOpaque(box).release() }
-            return IAGTypeApplyFields2C(
-                self, options,
-                { name, offset, ty, c in
-                    Unmanaged<_WandrFieldApplyBoolBox>.fromOpaque(c).takeUnretainedValue().f(name, offset, ty)
-                },
-                UnsafeRawPointer(box))
+        // [wasm] proven path (ported from OpenSwiftUIProject/Compute AG fork): pass a pointer to the
+        // escaping closure as the plain-C context; the @convention(c) thunk reconstructs + calls it.
+        // (A heap box + stored closure property hits an out-of-bounds table access on the inner call.)
+        return withoutActuallyEscaping(body) { escaping in
+            withUnsafePointer(to: escaping) { ctxPtr in
+                IAGTypeApplyFields2C(
+                    self, options,
+                    { fieldName, fieldOffset, fieldType, ctx in
+                        ctx.assumingMemoryBound(to: ((UnsafePointer<CChar>, Int, Any.Type) -> Bool).self)
+                            .pointee(fieldName, fieldOffset, fieldType.type)
+                    },
+                    UnsafeRawPointer(ctxPtr))
+            }
         }
         #else
         return IAGTypeApplyFields2(self, options: options) { fieldName, fieldOffset, fieldType in

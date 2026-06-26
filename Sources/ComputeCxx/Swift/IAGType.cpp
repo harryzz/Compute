@@ -217,27 +217,77 @@ bool IAGTypeApplyFields2(IAGTypeID typeID, IAGTypeApplyOptions options,
 }
 
 #if defined(__wasi__)
-// [wasm] IAGTypeApplyFields2's callback is IAG_SWIFT_CC(swift); the @convention(c) thunk Swift can
-// actually pass doesn't match clang's swiftcall lowering on wasm (indirect-call trap). Bridge through
-// a plain-C entry: a swiftcc C++ trampoline (clang-to-clang, so it matches the ClosureFunction call)
-// forwards synchronously to the plain-C callback.
-namespace {
-struct ApplyFields2Tramp {
-    bool (*fn)(const char *, size_t, IAGTypeID, const void *);
-    const void *ctx;
-};
-static bool apply_fields2_tramp(const char *name, size_t offset, IAGTypeID type,
-                                const void *c IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift) {
-    auto *tr = reinterpret_cast<const ApplyFields2Tramp *>(c);
-    return tr->fn(name, offset, type, tr->ctx);
-}
-} // namespace
+// [wasm] direct plain-C entry for IAGTypeApplyFields2 (ported from OpenSwiftUIProject/Compute AG fork,
+// which clears the OpenSwiftUI layout-engine wall with it): a VisitorC holding a plain-C body avoids
+// the swiftcall ClosureFunction entirely, so the @convention(c) thunk Swift passes is invoked with the
+// C convention that matches it (the trampoline-through-ClosureFunction route hit an uninitialized
+// indirect call on wasm).
 extern "C" bool IAGTypeApplyFields2C(IAGTypeID typeID, IAGTypeApplyOptions options,
                                      bool (*apply)(const char *field_name, size_t field_offset,
                                                    IAGTypeID field_type, const void *context),
                                      const void *apply_context) {
-    ApplyFields2Tramp tr{apply, apply_context};
-    return IAGTypeApplyFields2(typeID, options, apply_fields2_tramp, &tr);
+    class VisitorC : public IAG::swift::metadata_visitor {
+        IAGTypeApplyOptions _options;
+        bool (*_body)(const char *, size_t, IAGTypeID, const void *);
+        const void *_context;
+
+      public:
+        VisitorC(IAGTypeApplyOptions options, bool (*body)(const char *, size_t, IAGTypeID, const void *),
+                 const void *context)
+            : _options(options), _body(body), _context(context) {}
+
+        bool unknown_result() override {
+            return _options & IAGTypeApplyOptionsContinueAfterUnknownField;
+        }
+        bool visit_field(const IAG::swift::metadata &type, const IAG::swift::field_record &field,
+                         size_t field_offset, size_t field_size) override {
+            auto mangled_name = field.MangledTypeName.get();
+            auto field_type = type.mangled_type_name_ref(mangled_name, true, nullptr);
+            if (!field_type) {
+                return unknown_result();
+            }
+            return _body(field.FieldName.get(), field_offset, IAGTypeID(field_type), _context);
+        }
+        bool visit_case(const IAG::swift::metadata &type, const IAG::swift::field_record &field,
+                        uint32_t index) override {
+            auto mangled_name = field.MangledTypeName.get();
+            auto field_type = type.mangled_type_name_ref(mangled_name, true, nullptr);
+            if (!field_type) {
+                return unknown_result();
+            }
+            return _body(field.FieldName.get(), index, IAGTypeID(field_type), _context);
+        }
+    };
+
+    VisitorC visitor(options, apply, apply_context);
+    auto type = reinterpret_cast<const IAG::swift::metadata *>(typeID);
+    switch (type->getKind()) {
+    case ::swift::MetadataKind::Class:
+        if (options & IAGTypeApplyOptionsEnumerateClassFields) {
+            return type->visit_heap(visitor, IAG::LayoutDescriptor::HeapMode::Class);
+        }
+        return false;
+    case ::swift::MetadataKind::Struct:
+        if (!(options & IAGTypeApplyOptionsEnumerateClassFields) &&
+            !(options & IAGTypeApplyOptionsEnumerateEnumCases)) {
+            return type->visit(visitor);
+        }
+        return false;
+    case ::swift::MetadataKind::Enum:
+    case ::swift::MetadataKind::Optional:
+        if (options & IAGTypeApplyOptionsEnumerateEnumCases) {
+            return type->visit(visitor);
+        }
+        return false;
+    case ::swift::MetadataKind::Tuple:
+        if (!(options & IAGTypeApplyOptionsEnumerateClassFields) &&
+            !(options & IAGTypeApplyOptionsEnumerateEnumCases)) {
+            return type->visit(visitor);
+        }
+        return false;
+    default:
+        return false;
+    }
 }
 #endif
 
