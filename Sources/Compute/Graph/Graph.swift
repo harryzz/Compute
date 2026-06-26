@@ -121,14 +121,44 @@ func IAGGraphWithMainThreadHandler(
     mainThreadHandler: (() -> Void) -> Void
 )
 
+#if arch(wasm32)
+// [wasm] Boxes for the escaping closures stored by the graph's update/invalidation callbacks.
+// Retained for the graph's lifetime (set once per graph; intentionally not released — negligible).
+private final class _WandrGraphUpdateBox { let f: () -> Void; init(_ f: @escaping () -> Void) { self.f = f } }
+private final class _WandrGraphInvalidationBox {
+    let f: (AnyAttribute) -> Void
+    init(_ f: @escaping (AnyAttribute) -> Void) { self.f = f }
+}
+#endif
+
 extension Graph {
 
     public func onUpdate(_ handler: @escaping () -> Void) {
+        #if arch(wasm32)
+        // [wasm] The @_silgen_name shadow mislowers the swiftcall-closure ABI -> call_indirect
+        // signature_mismatch. Route through the IAG_REFINED_FOR_SWIFT import (__-prefixed), which
+        // carries IAG_SWIFT_CC(swift)/IAG_SWIFT_CONTEXT so the compiler emits the correct swiftcc
+        // thunk + context. The handler is boxed (the C side stores it for later updates).
+        let ctx = Unmanaged.passRetained(_WandrGraphUpdateBox(handler)).toOpaque()
+        __IAGGraphSetUpdateCallback(
+            self,
+            { c in Unmanaged<_WandrGraphUpdateBox>.fromOpaque(c).takeUnretainedValue().f() },
+            UnsafeRawPointer(ctx))
+        #else
         IAGGraphSetUpdateCallback(unsafeBitCast(self, to: UnsafeRawPointer.self), callback: handler)
+        #endif
     }
 
     public func onInvalidation(_ handler: @escaping (AnyAttribute) -> Void) {
+        #if arch(wasm32)
+        let ctx = Unmanaged.passRetained(_WandrGraphInvalidationBox(handler)).toOpaque()
+        __IAGGraphSetInvalidationCallback(
+            self,
+            { attr, c in Unmanaged<_WandrGraphInvalidationBox>.fromOpaque(c).takeUnretainedValue().f(attr) },
+            UnsafeRawPointer(ctx))
+        #else
         IAGGraphSetInvalidationCallback(unsafeBitCast(self, to: UnsafeRawPointer.self), callback: handler)
+        #endif
     }
 
     public func withDeadline<T>(_ deadline: UInt64, _ body: () -> T) -> T {
