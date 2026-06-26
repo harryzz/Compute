@@ -23,4 +23,5 @@
 #include <ComputeCxx/IAGType.h>
 #include <ComputeCxx/IAGUniqueID.h>
 #include <ComputeCxx/IAGValue.h>
+#include <ComputeCxx/IAGWasiClosureShim.h>
 #include <ComputeCxx/IAGWeakAttribute.h>

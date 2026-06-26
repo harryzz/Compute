@@ -4,9 +4,13 @@ import ComputeCxx
 func IAGTypeApplyFields(_ type: Metadata, body: (UnsafePointer<CChar>, Int, Metadata) -> Void)
 
 public func forEachField(of type: Any.Type, do body: (UnsafePointer<Int8>, Int, Any.Type) -> Void) {
+    #if arch(wasm32)
+    WasiClosureShim.forEachField(of: Metadata(type), body)
+    #else
     IAGTypeApplyFields(Metadata(type)) { fieldName, fieldOffset, fieldType in
         body(fieldName, fieldOffset, fieldType.type)
     }
+    #endif
 }
 
 @_silgen_name("IAGTypeApplyFields2")
@@ -32,9 +36,13 @@ extension Metadata {
     )
         -> Bool
     {
+        #if arch(wasm32)
+        return WasiClosureShim.forEachField2(of: self, options: options, body)
+        #else
         return IAGTypeApplyFields2(self, options: options) { fieldName, fieldOffset, fieldType in
             return body(fieldName, fieldOffset, fieldType.type)
         }
+        #endif
     }
 
 }
