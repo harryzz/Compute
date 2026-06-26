@@ -49,5 +49,39 @@ enum WasiClosureShim {
             }
         }
     }
+
+    // MARK: - Graph callbacks (persistent — the engine stores the callback)
+    //
+    // These closures outlive the call (the engine invokes them on later updates/invalidations), so a
+    // stack pointer won't do — box on the heap. The engine does NOT retain the context, so we own the
+    // +1 (passRetained) and intentionally never release it: the callback is registered once for the
+    // graph's lifetime. The no/one-arg swiftcc callback matches a @convention(c) thunk, so these route
+    // through the refined imports directly (no C-variant needed).
+
+    static func onUpdate(_ graph: Graph, _ handler: @escaping () -> Void) {
+        let ctx = Unmanaged.passRetained(_UpdateBox(handler)).toOpaque()
+        __IAGGraphSetUpdateCallback(
+            graph,
+            { c in Unmanaged<_UpdateBox>.fromOpaque(c).takeUnretainedValue().f() },
+            UnsafeRawPointer(ctx))
+    }
+
+    static func onInvalidation(_ graph: Graph, _ handler: @escaping (AnyAttribute) -> Void) {
+        let ctx = Unmanaged.passRetained(_InvalidationBox(handler)).toOpaque()
+        __IAGGraphSetInvalidationCallback(
+            graph,
+            { attr, c in Unmanaged<_InvalidationBox>.fromOpaque(c).takeUnretainedValue().f(attr) },
+            UnsafeRawPointer(ctx))
+    }
+}
+
+// Heap boxes for the persistent Graph callbacks (see WasiClosureShim.onUpdate/onInvalidation).
+private final class _UpdateBox {
+    let f: () -> Void
+    init(_ f: @escaping () -> Void) { self.f = f }
+}
+private final class _InvalidationBox {
+    let f: (AnyAttribute) -> Void
+    init(_ f: @escaping (AnyAttribute) -> Void) { self.f = f }
 }
 #endif

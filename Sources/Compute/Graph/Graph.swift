@@ -124,11 +124,19 @@ func IAGGraphWithMainThreadHandler(
 extension Graph {
 
     public func onUpdate(_ handler: @escaping () -> Void) {
+        #if arch(wasm32)
+        WasiClosureShim.onUpdate(self, handler)
+        #else
         IAGGraphSetUpdateCallback(unsafeBitCast(self, to: UnsafeRawPointer.self), callback: handler)
+        #endif
     }
 
     public func onInvalidation(_ handler: @escaping (AnyAttribute) -> Void) {
+        #if arch(wasm32)
+        WasiClosureShim.onInvalidation(self, handler)
+        #else
         IAGGraphSetInvalidationCallback(unsafeBitCast(self, to: UnsafeRawPointer.self), callback: handler)
+        #endif
     }
 
     public func withDeadline<T>(_ deadline: UInt64, _ body: () -> T) -> T {
