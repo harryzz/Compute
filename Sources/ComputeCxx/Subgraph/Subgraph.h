@@ -210,6 +210,22 @@ class Subgraph : public data::zone {
 
     data::ptr<Node> cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
                                 ClosureFunctionCI<uint32_t, IAGUnownedGraphContextRef> get_attribute_type_id);
+#if defined(__wasi__)
+    // [wasm] plain-C getter (no swiftcall) for the closure-ABI shim's read-cached path. The swiftcall
+    // ClosureFunctionCI can't be built from the @convention(c) thunk Swift emits; this invokes the
+    // thunk via the C ABI. Fed into the same templated cache_fetch body. See IAGGraphReadCachedAttributeC.
+    struct PlainTypeIDGetter {
+        uint32_t (*_Nullable fn)(IAGUnownedGraphContextRef, const void *_Nullable) = nullptr;
+        const void *_Nullable ctx = nullptr;
+        explicit operator bool() const { return fn != nullptr; }
+        uint32_t operator()(IAGUnownedGraphContextRef g) const { return fn(g, ctx); }
+    };
+    data::ptr<Node> cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
+                                PlainTypeIDGetter get_attribute_type_id);
+#endif
+    template <typename Getter>
+    data::ptr<Node> cache_fetch_tmpl(size_t hash, const swift::metadata &metadata, const void *body,
+                                     Getter get_attribute_type_id);
     void cache_insert(data::ptr<Node> node);
 
     void cache_collect();

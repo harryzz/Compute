@@ -11,6 +11,8 @@
 
 #include <ComputeCxx/IAGAttribute.h>
 #include <ComputeCxx/IAGBase.h>
+#include <ComputeCxx/IAGCachedValueOptions.h>
+#include <ComputeCxx/IAGGraph.h>
 #include <ComputeCxx/IAGType.h>
 
 #if defined(__wasi__)
@@ -42,6 +44,18 @@ IAG_EXPORT
 void IAGGraphMutateAttributeC(IAGAttribute attribute, IAGTypeID type, bool invalidating,
                               void (*modify)(void *body, const void *context),
                               const void *modify_context);
+
+// MARK: - Cached value read (synchronous getter)
+
+// Plain-C counterpart of IAGGraphReadCachedAttribute. Defined in IAGGraph.cpp (next to its TU-local
+// read_cached_attribute) rather than the shim cpp; the type-id getter uses the C calling convention.
+IAG_EXPORT
+void *_Nullable IAGGraphReadCachedAttributeC(size_t hash, IAGTypeID type, const void *body, IAGTypeID value_type,
+                                             IAGCachedValueOptions options, IAGAttribute owner,
+                                             bool *_Nullable changed_out,
+                                             uint32_t (*closure)(IAGUnownedGraphContextRef graph_context,
+                                                                 const void *context),
+                                             const void *closure_context);
 
 IAG_EXTERN_C_END
 IAG_ASSUME_NONNULL_END

@@ -71,6 +71,26 @@ enum WasiClosureShim {
         }
     }
 
+    // MARK: - Cached value read (synchronous type-id getter)
+
+    static func readCachedAttribute(
+        hash: Int, type: Metadata, body: UnsafeRawPointer, valueType: Metadata,
+        options: CachedValueOptions, owner: AnyAttribute,
+        makeTypeID: (UnownedGraphContext) -> UInt32
+    ) -> UnsafeRawPointer {
+        withoutActuallyEscaping(makeTypeID) { escaping in
+            withUnsafePointer(to: escaping) { ctxPtr in
+                UnsafeRawPointer(
+                    IAGGraphReadCachedAttributeC(
+                        hash, type, body, valueType, options, owner, nil,
+                        { graph, ctx in
+                            ctx.assumingMemoryBound(to: ((UnownedGraphContext) -> UInt32).self).pointee(graph)
+                        },
+                        UnsafeRawPointer(ctxPtr))!)
+            }
+        }
+    }
+
     // MARK: - Graph callbacks (persistent — the engine stores the callback)
     //
     // These closures outlive the call (the engine invokes them on later updates/invalidations), so a

@@ -1,4 +1,5 @@
 #include "IAGGraph-Private.h"
+#include <ComputeCxx/IAGWasiClosureShim.h> // [wasm] extern-C decl of IAGGraphReadCachedAttributeC (defined below)
 
 #if TARGET_OS_MAC
 #include "CoreFoundationPrivate/CFRuntime.h"
@@ -654,10 +655,11 @@ void IAGGraphSetInvalidationCallback(IAGGraphRef graph,
 
 namespace {
 
+template <typename Getter>
 void *read_cached_attribute(size_t hash, const IAG::swift::metadata &metadata, const void *body,
                             const IAG::swift::metadata &value_metadata, IAGCachedValueOptions options,
                             IAG::AttributeID owner_id, IAGChangedValueFlags *flags_out,
-                            IAG::ClosureFunctionCI<uint32_t, IAGUnownedGraphContextRef> get_attribute_type_id) {
+                            Getter get_attribute_type_id) {
     auto update = IAG::Graph::current_update();
     auto update_stack = update.tag() == 0 ? update.get() : nullptr;
 
@@ -721,12 +723,36 @@ void *IAGGraphReadCachedAttributeIfExists(size_t hash, IAGTypeID type, const voi
     auto owner_id = IAG::AttributeID(owner);
 
     IAGChangedValueFlags flags = 0;
-    void *value = read_cached_attribute(hash, *metadata, body, *value_metadata, options, owner_id, &flags, nullptr);
+    void *value = read_cached_attribute(hash, *metadata, body, *value_metadata, options, owner_id, &flags,
+                                        IAG::ClosureFunctionCI<uint32_t, IAGUnownedGraphContextRef>(nullptr));
     if (changed_out) {
         *changed_out = flags & IAGChangedValueFlagsChanged ? true : false;
     }
     return value;
 }
+
+#if defined(__wasi__)
+// [wasm] plain-C entry for IAGGraphReadCachedAttribute (declared in IAGWasiClosureShim.h). Same body as
+// the swiftcc version above, but feeds read_cached_attribute a plain-C Subgraph::PlainTypeIDGetter so the
+// type-id closure is invoked via the C ABI. Stays in this TU (not the shim cpp) because
+// read_cached_attribute is file-local here. See WasiClosureShim.readCachedAttribute.
+void *IAGGraphReadCachedAttributeC(size_t hash, IAGTypeID type, const void *body, IAGTypeID value_type,
+                                   IAGCachedValueOptions options, IAGAttribute owner, bool *_Nullable changed_out,
+                                   uint32_t (*closure)(IAGUnownedGraphContextRef graph_context, const void *context),
+                                   const void *closure_context) {
+    auto metadata = reinterpret_cast<const IAG::swift::metadata *>(type);
+    auto value_metadata = reinterpret_cast<const IAG::swift::metadata *>(value_type);
+    auto owner_id = IAG::AttributeID(owner);
+
+    IAGChangedValueFlags flags = 0;
+    void *value = read_cached_attribute(hash, *metadata, body, *value_metadata, options, owner_id, &flags,
+                                        IAG::Subgraph::PlainTypeIDGetter{closure, closure_context});
+    if (changed_out) {
+        *changed_out = flags & IAGChangedValueFlagsChanged ? true : false;
+    }
+    return value;
+}
+#endif
 
 #pragma mark - Update
 

@@ -723,8 +723,9 @@ void Subgraph::update(IAGAttributeFlags mask) {
 // age = 0x01: recently inserted, in items(), inserted in recycle list as mru
 // age = 0xff: collected, removed from items(), in recycle list
 
-data::ptr<Node> Subgraph::cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
-                                      ClosureFunctionCI<uint32_t, IAGUnownedGraphContextRef> get_attribute_type_id) {
+template <typename Getter>
+data::ptr<Node> Subgraph::cache_fetch_tmpl(size_t hash, const swift::metadata &metadata, const void *body,
+                                           Getter get_attribute_type_id) {
     if (_cache == nullptr) {
         _cache = alloc_bytes(sizeof(NodeCache), 7).unsafe_cast<NodeCache>();
         new (_cache.get()) NodeCache();
@@ -811,6 +812,20 @@ data::ptr<Node> Subgraph::cache_fetch(size_t hash, const swift::metadata &metada
 
     return item->node;
 }
+
+// Non-template entry points dispatching to cache_fetch_tmpl. ClosureFunctionCI preserves the existing
+// (swiftcc) caller; PlainTypeIDGetter is the wasm plain-C path (see IAGGraphReadCachedAttributeC).
+data::ptr<Node> Subgraph::cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
+                                      ClosureFunctionCI<uint32_t, IAGUnownedGraphContextRef> get_attribute_type_id) {
+    return cache_fetch_tmpl(hash, metadata, body, get_attribute_type_id);
+}
+
+#if defined(__wasi__)
+data::ptr<Node> Subgraph::cache_fetch(size_t hash, const swift::metadata &metadata, const void *body,
+                                      PlainTypeIDGetter get_attribute_type_id) {
+    return cache_fetch_tmpl(hash, metadata, body, get_attribute_type_id);
+}
+#endif
 
 void Subgraph::cache_insert(data::ptr<Node> node) {
     if (!is_valid()) {

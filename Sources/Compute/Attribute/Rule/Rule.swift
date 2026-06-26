@@ -101,16 +101,8 @@ extension Rule where Self: Hashable {
         bodyPtr: UnsafeRawPointer,
         update: () -> (UnsafeMutableRawPointer, AnyAttribute) -> Void
     ) -> UnsafePointer<Value> {
-        let value = IAGGraphReadCachedAttribute(
-            hash: hashValue,
-            type: Metadata(Self.self),
-            body: bodyPtr,
-            valueType: Metadata(Value.self),
-            options: options,
-            owner: owner ?? .nil,
-            changed: nil
-        ) { graph in
-            return Graph.typeIndex(
+        let makeTypeID: (UnownedGraphContext) -> UInt32 = { graph in
+            Graph.typeIndex(
                 ctx: graph,
                 body: Self.self,
                 valueType: Metadata(Value.self),
@@ -118,6 +110,28 @@ extension Rule where Self: Hashable {
                 update: update
             )
         }
+        #if arch(wasm32)
+        let value = WasiClosureShim.readCachedAttribute(
+            hash: hashValue,
+            type: Metadata(Self.self),
+            body: bodyPtr,
+            valueType: Metadata(Value.self),
+            options: options,
+            owner: owner ?? .nil,
+            makeTypeID: makeTypeID
+        )
+        #else
+        let value = IAGGraphReadCachedAttribute(
+            hash: hashValue,
+            type: Metadata(Self.self),
+            body: bodyPtr,
+            valueType: Metadata(Value.self),
+            options: options,
+            owner: owner ?? .nil,
+            changed: nil,
+            attributeTypeID: makeTypeID
+        )
+        #endif
         return value.assumingMemoryBound(to: Value.self)
     }
 
