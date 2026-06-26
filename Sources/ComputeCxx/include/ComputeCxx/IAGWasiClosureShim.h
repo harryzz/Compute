@@ -13,6 +13,7 @@
 #include <ComputeCxx/IAGBase.h>
 #include <ComputeCxx/IAGCachedValueOptions.h>
 #include <ComputeCxx/IAGGraph.h>
+#include <ComputeCxx/IAGSubgraph.h>
 #include <ComputeCxx/IAGType.h>
 
 #if defined(__wasi__)
@@ -56,6 +57,14 @@ void *_Nullable IAGGraphReadCachedAttributeC(size_t hash, IAGTypeID type, const 
                                              uint32_t (*closure)(IAGUnownedGraphContextRef graph_context,
                                                                  const void *context),
                                              const void *closure_context);
+
+// MARK: - Subgraph apply (synchronous traversal)
+
+// Plain-C counterpart of IAGSubgraphApply; forwards to Subgraph::apply with a plain-C PlainApplyBody.
+IAG_EXPORT
+void IAGSubgraphApplyC(IAGSubgraphRef subgraph, uint32_t options,
+                       void (*body)(IAGAttribute attribute, const void *context),
+                       const void *body_context);
 
 IAG_EXTERN_C_END
 IAG_ASSUME_NONNULL_END

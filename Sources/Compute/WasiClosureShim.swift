@@ -91,6 +91,21 @@ enum WasiClosureShim {
         }
     }
 
+    // MARK: - Subgraph apply (synchronous traversal)
+
+    static func subgraphForEach(_ subgraph: Subgraph, _ flags: Subgraph.Flags, _ body: (AnyAttribute) -> Void) {
+        withoutActuallyEscaping(body) { escaping in
+            withUnsafePointer(to: escaping) { ctxPtr in
+                IAGSubgraphApplyC(
+                    subgraph, UInt32(flags.rawValue),
+                    { attr, ctx in
+                        ctx.assumingMemoryBound(to: ((AnyAttribute) -> Void).self).pointee(attr)
+                    },
+                    UnsafeRawPointer(ctxPtr))
+            }
+        }
+    }
+
     // MARK: - Graph callbacks (persistent — the engine stores the callback)
     //
     // These closures outlive the call (the engine invokes them on later updates/invalidations), so a

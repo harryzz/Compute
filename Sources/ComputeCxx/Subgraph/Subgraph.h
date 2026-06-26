@@ -186,6 +186,19 @@ class Subgraph : public data::zone {
     static std::atomic<uint32_t> _last_traversal_seed;
 
     void apply(uint32_t options, ClosureFunctionAV<void, IAGAttribute> body);
+#if defined(__wasi__)
+    // [wasm] plain-C applier (no swiftcall) for the closure-ABI shim's subgraph-apply path. Same
+    // role as ClosureFunctionAV but invoked via the C ABI. See IAGSubgraphApplyC.
+    struct PlainApplyBody {
+        void (*_Nullable fn)(IAGAttribute, const void *_Nullable) = nullptr;
+        const void *_Nullable ctx = nullptr;
+        explicit operator bool() const { return fn != nullptr; }
+        void operator()(IAGAttribute a) const { fn(a, ctx); }
+    };
+    void apply(uint32_t options, PlainApplyBody body);
+#endif
+    template <typename Getter>
+    void apply_tmpl(uint32_t options, Getter body);
 
     void update(IAGAttributeFlags mask);
 

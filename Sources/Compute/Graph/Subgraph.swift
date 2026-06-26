@@ -36,7 +36,11 @@ extension Subgraph {
         _ flags: Subgraph.Flags,
         _ body: (AnyAttribute) -> Void
     ) {
+        #if arch(wasm32)
+        WasiClosureShim.subgraphForEach(self, flags, body)
+        #else
         IAGSubgraphApply(unsafeBitCast(self, to: UnsafeRawPointer.self), flags, body)
+        #endif
     }
 
 }

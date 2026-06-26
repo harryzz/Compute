@@ -547,7 +547,8 @@ void Subgraph::add_indirect(data::ptr<IndirectNode> node, bool flag) {
 
 std::atomic<uint32_t> Subgraph::_last_traversal_seed = {};
 
-void Subgraph::apply(uint32_t options, ClosureFunctionAV<void, IAGAttribute> body) {
+template <typename Getter>
+void Subgraph::apply_tmpl(uint32_t options, Getter body) {
     if (!is_valid()) {
         return;
     }
@@ -616,6 +617,18 @@ void Subgraph::apply(uint32_t options, ClosureFunctionAV<void, IAGAttribute> bod
         }
     }
 }
+
+// Non-template entry points dispatching to apply_tmpl. ClosureFunctionAV preserves the existing
+// (swiftcc) caller; PlainApplyBody is the wasm plain-C path (see IAGSubgraphApplyC).
+void Subgraph::apply(uint32_t options, ClosureFunctionAV<void, IAGAttribute> body) {
+    apply_tmpl(options, body);
+}
+
+#if defined(__wasi__)
+void Subgraph::apply(uint32_t options, PlainApplyBody body) {
+    apply_tmpl(options, body);
+}
+#endif
 
 void Subgraph::update(IAGAttributeFlags mask) {
     if (_graph->needs_update() && _graph->thread_is_updating()) {

@@ -136,4 +136,17 @@ void IAGGraphMutateAttributeC(IAGAttribute attribute, IAGTypeID type, bool inval
                                           modify_context, invalidating);
 }
 
+// MARK: - Subgraph apply
+
+// Forwards to Subgraph::apply with a plain-C PlainApplyBody (the body is invoked via the C ABI so a
+// Swift @convention(c) thunk + pointer-to-closure matches it).
+void IAGSubgraphApplyC(IAGSubgraphRef subgraph, uint32_t options,
+                       void (*body)(IAGAttribute attribute, const void *context), const void *body_context) {
+    auto sg = IAG::Subgraph::from_cf(subgraph);
+    if (sg == nullptr) {
+        return;
+    }
+    sg->apply(options, IAG::Subgraph::PlainApplyBody{body, body_context});
+}
+
 #endif // __wasi__
