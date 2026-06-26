@@ -323,6 +323,12 @@ class Graph {
 
     void attribute_modify(data::ptr<Node> node, const swift::metadata &type, ClosureFunctionPV<void, void *> modify,
                           bool invalidating);
+#if defined(__wasi__)
+    // [wasm] plain-C variant: modify is called with the C convention (matches Swift's @convention(c) thunk).
+    void attribute_modify_c(data::ptr<Node> node, const swift::metadata &type,
+                            void (*modify)(void *body, const void *context), const void *modify_context,
+                            bool invalidating);
+#endif
 
     // MARK: Value
 

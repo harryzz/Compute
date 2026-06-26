@@ -210,6 +210,14 @@ void IAGGraphMutateAttribute(IAGAttribute attribute, IAGTypeID type, bool invali
                             void (*modify)(void *body, const void *context IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift),
                             const void *modify_context);
 
+#if defined(__wasi__)
+// [wasm] plain-C entry (modify uses the C calling convention) — see IAGGraph.cpp.
+IAG_EXPORT
+void IAGGraphMutateAttributeC(IAGAttribute attribute, IAGTypeID type, bool invalidating,
+                             void (*modify)(void *body, const void *context),
+                             const void *modify_context);
+#endif
+
 // MARK: Value
 
 IAG_EXPORT

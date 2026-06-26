@@ -461,6 +461,28 @@ void IAGGraphMutateAttribute(IAGAttribute attribute, IAGTypeID type, bool invali
                                         IAG::ClosureFunctionPV<void, void *>(modify, modify_context), invalidating);
 }
 
+#if defined(__wasi__)
+// [wasm] plain-C entry for IAGGraphMutateAttribute (ported from AG fork): routes to attribute_modify_c
+// so the modify callback uses the C convention that Swift's @convention(c) thunk matches.
+void IAGGraphMutateAttributeC(IAGAttribute attribute, IAGTypeID type, bool invalidating,
+                              void (*modify)(void *body, const void *context), const void *modify_context) {
+    auto attribute_id = IAG::AttributeID(attribute);
+    auto node = attribute_id.get_node();
+    if (!node) {
+        IAG::precondition_failure("non-direct attribute id: %u", attribute);
+    }
+    attribute_id.validate_data_offset();
+
+    auto subgraph = attribute_id.subgraph();
+    if (!subgraph) {
+        IAG::precondition_failure("no graph: %u", attribute);
+    }
+
+    subgraph->graph()->attribute_modify_c(node, *reinterpret_cast<const IAG::swift::metadata *>(type), modify,
+                                          modify_context, invalidating);
+}
+#endif
+
 #pragma mark - Value
 
 namespace {
