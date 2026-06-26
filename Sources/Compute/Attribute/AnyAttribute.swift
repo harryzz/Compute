@@ -35,6 +35,9 @@ extension AnyAttribute {
     }
 
     public func mutateBody<Body>(as type: Body.Type, invalidating: Bool, _ mutator: (inout Body) -> Void) {
+        #if arch(wasm32)
+        WasiClosureShim.mutateBody(self, as: type, invalidating: invalidating, mutator)
+        #else
         withoutActuallyEscaping(mutator) { escapingMutator in
             let modify: (UnsafeMutableRawPointer) -> Void = { pointer in
                 escapingMutator(&pointer.assumingMemoryBound(to: Body.self).pointee)
@@ -46,6 +49,7 @@ extension AnyAttribute {
                 modify: modify
             )
         }
+        #endif
     }
 
     // Node

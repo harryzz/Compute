@@ -14,6 +14,11 @@
 #include "Metadata.h"
 #include "MetadataVisitor.h"
 
+// For the internals-coupled variants (e.g. MutateAttributeC -> Graph::attribute_modify_c).
+#include "Attribute/AttributeID/AttributeID.h"
+#include "Graph/Graph.h"
+#include "Subgraph/Subgraph.h"
+
 // MARK: - Type field enumeration
 
 void IAGTypeApplyFieldsC(IAGTypeID typeID,
@@ -107,6 +112,28 @@ bool IAGTypeApplyFields2C(IAGTypeID typeID, IAGTypeApplyOptions options,
     default:
         return false;
     }
+}
+
+// MARK: - Attribute body mutation
+
+// Resolves the attribute to its node/subgraph and forwards to Graph::attribute_modify_c (core). The
+// modify callback uses the C convention so a Swift @convention(c) thunk + pointer-to-closure matches.
+void IAGGraphMutateAttributeC(IAGAttribute attribute, IAGTypeID type, bool invalidating,
+                              void (*modify)(void *body, const void *context), const void *modify_context) {
+    auto attribute_id = IAG::AttributeID(attribute);
+    auto node = attribute_id.get_node();
+    if (!node) {
+        IAG::precondition_failure("non-direct attribute id: %u", attribute);
+    }
+    attribute_id.validate_data_offset();
+
+    auto subgraph = attribute_id.subgraph();
+    if (!subgraph) {
+        IAG::precondition_failure("no graph: %u", attribute);
+    }
+
+    subgraph->graph()->attribute_modify_c(node, *reinterpret_cast<const IAG::swift::metadata *>(type), modify,
+                                          modify_context, invalidating);
 }
 
 #endif // __wasi__

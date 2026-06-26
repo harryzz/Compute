@@ -9,6 +9,7 @@
 // a plain-C `…C` counterpart whose callback uses the ordinary C calling convention — which the Swift
 // thunk matches exactly. All such declarations live here (one place), gated to wasi only.
 
+#include <ComputeCxx/IAGAttribute.h>
 #include <ComputeCxx/IAGBase.h>
 #include <ComputeCxx/IAGType.h>
 
@@ -33,6 +34,14 @@ bool IAGTypeApplyFields2C(IAGTypeID typeID, IAGTypeApplyOptions options,
                           bool (*apply)(const char *field_name, size_t field_offset,
                                         IAGTypeID field_type, const void *context),
                           const void *apply_context);
+
+// MARK: - Attribute body mutation (synchronous)
+
+// Plain-C counterpart of IAGGraphMutateAttribute; forwards to Graph::attribute_modify_c (core).
+IAG_EXPORT
+void IAGGraphMutateAttributeC(IAGAttribute attribute, IAGTypeID type, bool invalidating,
+                              void (*modify)(void *body, const void *context),
+                              const void *modify_context);
 
 IAG_EXTERN_C_END
 IAG_ASSUME_NONNULL_END

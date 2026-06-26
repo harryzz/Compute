@@ -323,6 +323,12 @@ class Graph {
 
     void attribute_modify(data::ptr<Node> node, const swift::metadata &type, ClosureFunctionPV<void, void *> modify,
                           bool invalidating);
+#if defined(__wasi__)
+    // [wasm] plain-C-callback variant for the closure-ABI shim (see IAGWasiClosureShim.cpp).
+    void attribute_modify_c(data::ptr<Node> node, const swift::metadata &type,
+                            void (*modify)(void *body, const void *context), const void *modify_context,
+                            bool invalidating);
+#endif
 
     // MARK: Value
 

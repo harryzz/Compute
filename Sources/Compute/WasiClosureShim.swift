@@ -50,6 +50,27 @@ enum WasiClosureShim {
         }
     }
 
+    // MARK: - Attribute body mutation (synchronous)
+
+    static func mutateBody<Body>(
+        _ attribute: AnyAttribute, as type: Body.Type, invalidating: Bool,
+        _ mutator: (inout Body) -> Void
+    ) {
+        withoutActuallyEscaping(mutator) { escapingMutator in
+            let modify: (UnsafeMutableRawPointer) -> Void = { pointer in
+                escapingMutator(&pointer.assumingMemoryBound(to: Body.self).pointee)
+            }
+            withUnsafePointer(to: modify) { ctxPtr in
+                IAGGraphMutateAttributeC(
+                    attribute, Metadata(type), invalidating,
+                    { body, ctx in
+                        ctx.assumingMemoryBound(to: ((UnsafeMutableRawPointer) -> Void).self).pointee(body)
+                    },
+                    UnsafeRawPointer(ctxPtr))
+            }
+        }
+    }
+
     // MARK: - Graph callbacks (persistent — the engine stores the callback)
     //
     // These closures outlive the call (the engine invokes them on later updates/invalidations), so a
