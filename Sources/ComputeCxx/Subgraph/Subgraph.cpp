@@ -1,5 +1,6 @@
 #include "Subgraph.h"
 
+#include <cstdio>
 #include <cstring>
 #include <ranges>
 #include <stack>
@@ -71,7 +72,16 @@ void Subgraph::clear_object() {
 
         if (current_subgraph() == this) {
             set_current_subgraph(nullptr);
+#if !defined(__wasi__)
+            // [wasm port] IAGSubgraphStorage is bridged with objc_bridge(id), which is EMPTY on wasm
+            // (no __has_attribute(objc_bridge)) — so Swift ARC does NOT manage struct-held `Subgraph`
+            // refs (e.g. ViewList.Subgraph items, parentSubgraph). The CF refcount is then the only
+            // owner, and releasing here frees a storage the live graph/Swift values still reference
+            // -> use-after-free (the ForEachList `any ViewList` UAF). Make the storage IMMORTAL on
+            // wasm: never release -> never freed -> every unmanaged Swift ref stays valid. Bounded
+            // leak of the CF wrapper only (the IAG::Subgraph node itself is still freed by the graph).
             CFRelease(object);
+#endif
         }
     }
 }
@@ -142,7 +152,11 @@ void Subgraph::invalidate_and_delete_(bool delete_zone_data) {
 
     // Store the graph locally since the `this` pointer may be deleted
     Graph &graph = *_graph;
-    if (!graph.is_deferring_subgraph_invalidation() && !graph.has_main_handler()) {
+    bool immediate = !graph.is_deferring_subgraph_invalidation() && !graph.has_main_handler();
+    fprintf(stderr, "[INVAL-PATH] sg=%p zone=%u deferring=%d main_handler=%d -> %s\n", (void *)this,
+            (unsigned)zone_id(), (int)graph.is_deferring_subgraph_invalidation(), (int)graph.has_main_handler(),
+            immediate ? "NOW" : "DEFERRED");
+    if (immediate) {
         invalidate_now(graph);
         graph.invalidate_subgraphs();
     } else {
@@ -245,6 +259,23 @@ void Subgraph::invalidate_now(Graph &graph) {
             }
             if (found_nil_attribute) {
                 break;
+            }
+        }
+    }
+
+    // [INSTR]
+    for (auto removed_subgraph : removed_subgraphs) {
+        for (auto page : removed_subgraph->pages()) {
+            for (auto attribute : attribute_view(page)) {
+                if (attribute.is_nil()) break;
+                if (attribute.get_node()) {
+                    fprintf(stderr, "[INVAL] removed node=%u sg=%p\n",
+                            (uint32_t)attribute, (void *)removed_subgraph);
+                } else if (auto in = attribute.get_indirect_node()) {
+                    fprintf(stderr, "[INVAL] removed indirect=%u src=%u sg=%p\n",
+                            (uint32_t)attribute, (uint32_t)in->source().identifier(),
+                            (void *)removed_subgraph);
+                }
             }
         }
     }

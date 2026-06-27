@@ -60,9 +60,13 @@ void IAGSubgraphSetCurrent(IAGSubgraphRef subgraph) {
     } else {
         IAG::Subgraph::set_current_subgraph(nullptr);
     }
+#if !defined(__wasi__)
+    // [wasm port] immortal Subgraph storage — see Subgraph::clear_object. objc_bridge(id) is empty on
+    // wasm so Swift ARC can't keep struct-held Subgraph refs alive; never release -> never freed -> no UAF.
     if (old_subgraph && old_subgraph->to_cf()) {
         CFRelease(old_subgraph->to_cf());
     }
+#endif
 }
 
 #pragma mark - Graph context

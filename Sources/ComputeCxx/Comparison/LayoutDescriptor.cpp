@@ -583,7 +583,7 @@ bool compare_existential_values(const swift::existential_type_metadata &type, co
         if (auto rhs_dynamic_type = type.dynamic_type((void *)rhs)) {
             if (lhs_dynamic_type == rhs_dynamic_type) {
                 unsigned char *lhs_value = (unsigned char *)type.project_value((void *)lhs);
-                unsigned char *rhs_value = (unsigned char *)type.project_value((void *)lhs);
+                unsigned char *rhs_value = (unsigned char *)type.project_value((void *)rhs);
                 if (lhs_value == rhs_value) {
                     return true;
                 }
@@ -592,10 +592,15 @@ bool compare_existential_values(const swift::existential_type_metadata &type, co
                     options = options & ~IAGComparisonOptionsCopyOnWrite;
                 }
 
-                ValueLayout wrapped_layout = fetch(reinterpret_cast<const swift::metadata &>(type), options, 0);
+                // Compare the projected payload against its DYNAMIC type's layout/size — NOT the
+                // existential container's. Using `type` (the existential) here fetched a layout whose
+                // first entry is itself an Existential, so compare() re-entered compare_existential_values
+                // on the SAME type unboundedly → wasm shadow-stack overflow into the metadata pool
+                // (no guard page) → the `any ViewList` metadata VWT zeroed → null-funcref destroy trap.
+                ValueLayout wrapped_layout = fetch(*lhs_dynamic_type, options, 0);
                 ValueLayout layout = wrapped_layout == ValueLayoutTrivial ? nullptr : wrapped_layout;
 
-                return compare(layout, lhs_value, rhs_value, type.vw_size(), options);
+                return compare(layout, lhs_value, rhs_value, lhs_dynamic_type->vw_size(), options);
             }
         }
     }
