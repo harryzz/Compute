@@ -42,12 +42,6 @@ Graph::UpdateStack::~UpdateStack() {
 
     if (_options & IAGGraphUpdateOptionsEndDeferringSubgraphInvalidationOnExit) {
         _graph->_deferring_subgraph_invalidation = false;
-        // [wandr] Flush deferred subgraph invalidations NOW, at the deterministic end of the
-        // (outermost) update — mirroring end_deferring_subgraph_invalidation (Graph.h:271), whose
-        // flush a wasm-era refactor dropped here. Without it, deferred teardowns linger and free
-        // their pages mid a LATER reader pass, churning zone_id under live weak/indirect readers
-        // (the move-2 use-after-free). Pages are reclaimed at this flush, so it does not leak.
-        _graph->invalidate_subgraphs();
     }
 }
 
