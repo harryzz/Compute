@@ -1,6 +1,5 @@
 #include "Graph.h"
 
-#include <cstdio>
 #if TARGET_OS_MAC
 #include <CoreFoundation/CFString.h>
 #else
@@ -18,8 +17,6 @@
 
 #include "Attribute/AttributeData/Node/IndirectNode.h"
 #include "Attribute/AttributeData/Node/Node.h"
-#include "Data/Table.h"
-#include "Data/Zone.h"
 #include "Attribute/AttributeID/OffsetAttributeID.h"
 #include "Attribute/AttributeType/AttributeType.h"
 #include "Attribute/AttributeView/AttributeView.h"
@@ -492,10 +489,6 @@ data::ptr<IndirectNode> Graph::add_indirect_attribute(Subgraph &subgraph, Attrib
         }
     }
 
-    fprintf(stderr, "[MKINDIR-TOP] in_sg=%p(ctx=%llu) source=%u src_sg=%p mutable=%d\n",
-            (void *)&subgraph, (unsigned long long)subgraph.context_id(), (uint32_t)attribute,
-            (void *)attribute.subgraph(), (int)is_mutable);
-
     if (is_mutable) {
         data::ptr<MutableIndirectNode> indirect_node_ptr =
             subgraph.alloc_bytes(sizeof(MutableIndirectNode), 3).unsafe_cast<MutableIndirectNode>();
@@ -507,13 +500,6 @@ data::ptr<IndirectNode> Graph::add_indirect_attribute(Subgraph &subgraph, Attrib
 
         add_input_dependencies(AttributeID(indirect_node_ptr), attribute);
         subgraph.add_indirect(indirect_node_ptr.unsafe_cast<IndirectNode>(), true);
-        {
-            auto ssg = attribute.subgraph();
-            fprintf(stderr, "[MKINDIR] indirect=%u in_sg=%p(ctx=%llu) source=%u src_sg=%p(ctx=%llu) traverses=%d\n",
-                    (uint32_t)AttributeID(indirect_node_ptr.unsafe_cast<IndirectNode>()), (void *)&subgraph,
-                    (unsigned long long)subgraph.context_id(), (uint32_t)attribute, (void *)ssg,
-                    ssg ? (unsigned long long)ssg->context_id() : 0ULL, (int)traverses_contexts);
-        }
         return indirect_node_ptr.unsafe_cast<IndirectNode>();
     } else {
         data::ptr<IndirectNode> indirect_node_ptr =
@@ -525,18 +511,6 @@ data::ptr<IndirectNode> Graph::add_indirect_attribute(Subgraph &subgraph, Attrib
         new (indirect_node_ptr.get()) IndirectNode(source, traverses_contexts, offset, size);
 
         subgraph.add_indirect(indirect_node_ptr, &subgraph != attribute.subgraph());
-        {
-            auto ssg = attribute.subgraph();
-            uint64_t raw = data::table::shared().raw_page_seed(attribute.page_ptr());
-            unsigned page_zone = (raw & 0xff00000000)
-                                     ? data::zone::info::from_raw_value(uint32_t(raw)).zone_id()
-                                     : 0;
-            fprintf(stderr,
-                    "[MKINDIR-NM] indirect=%u in_zone=%u source=%u stored_seed=%u src_sg_id=%u src_page_zone=%u\n",
-                    (uint32_t)AttributeID(indirect_node_ptr), (unsigned)subgraph.subgraph_id(),
-                    (uint32_t)attribute, (unsigned)uint32_t(subgraph_id),
-                    ssg ? (unsigned)ssg->subgraph_id() : 0, page_zone);
-        }
         return indirect_node_ptr;
     }
 }
@@ -544,11 +518,6 @@ data::ptr<IndirectNode> Graph::add_indirect_attribute(Subgraph &subgraph, Attrib
 void Graph::remove_node(data::ptr<Node> node) {
     if (node->is_updating()) {
         precondition_failure("deleting updating attribute: %u\n", node);
-    }
-    {
-        auto sg = AttributeID(node).subgraph();
-        fprintf(stderr, "[RMNODE] node=%u sg=%p sg_invalidated=%d\n",
-                (uint32_t)AttributeID(node), (void *)sg, sg ? (int)sg->is_invalidated() : -99);
     }
 
     for (auto &input_edge : node->input_edges()) {
@@ -705,26 +674,6 @@ uint32_t Graph::add_input(data::ptr<Node> node, AttributeID input, bool allow_ni
     if (!resolved_input || resolved_input.is_nil()) {
         if (allow_nil) {
             return UINT32_MAX;
-        }
-        {
-            auto rsg = AttributeID(node).subgraph();
-            auto isg = input.subgraph();
-            fprintf(stderr,
-                    "[ADDIN-FAIL] reader=%u reader_zone=%u reader_invalid=%d indirectnode=%u indirect_zone=%u allow_nil=%d\n",
-                    (uint32_t)AttributeID(node), rsg ? (unsigned)rsg->subgraph_id() : 0,
-                    rsg ? (int)rsg->is_invalidated() : -99, (uint32_t)input,
-                    isg ? (unsigned)isg->subgraph_id() : 0, (int)allow_nil);
-            if (auto in = input.get_indirect_node()) {
-                auto src = in->source();
-                auto srcid = src.identifier();
-                uint64_t raw = data::table::shared().raw_page_seed(srcid.page_ptr());
-                unsigned cur_zone = (raw & 0xff00000000)
-                                        ? data::zone::info::from_raw_value(uint32_t(raw)).zone_id()
-                                        : 0;
-                fprintf(stderr,
-                        "[ADDIN-FAIL]   indirect_source=%u recorded_seed=%u cur_page_zone=%u expired=%d\n",
-                        (uint32_t)srcid, src.seed(), cur_zone, (int)src.expired());
-            }
         }
         precondition_failure("reading from invalid source attribute: %u", input);
     }
@@ -951,9 +900,6 @@ void Graph::indirect_attribute_set(data::ptr<IndirectNode> indirect_node, Attrib
         precondition_failure("attribute references can't cross graph namespaces");
     }
 
-    fprintf(stderr, "[REDIR-SET] indirect=%u source=%u\n",
-            (uint32_t)AttributeID(indirect_node), (uint32_t)source);
-
     foreach_trace([&indirect_node, &source](Trace &trace) { trace.set_source(indirect_node, source); });
 
     OffsetAttributeID resolved_source = source.resolve(TraversalOptions::SkipMutableReference);
@@ -1002,10 +948,6 @@ bool Graph::indirect_attribute_reset(data::ptr<IndirectNode> indirect_node, bool
 
     AttributeID old_source_or_nil = indirect_node->source().evaluate();
     AttributeID new_source_or_nil = new_source.evaluate();
-
-    fprintf(stderr, "[REDIR-RESET] indirect=%u old=%u new=%u initial_expired=%d\n",
-            (uint32_t)AttributeID(indirect_node), (uint32_t)old_source_or_nil,
-            (uint32_t)new_source_or_nil, (int)indirect_node->to_mutable().initial_source().expired());
 
     foreach_trace(
         [&indirect_node, &new_source_or_nil](Trace &trace) { trace.set_source(indirect_node, new_source_or_nil); });
