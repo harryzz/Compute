@@ -1,4 +1,10 @@
 import ComputeCxx
+#if os(WASI)
+import WASILibc
+@inline(never) func _srTrace(_ s: String) { fputs("[SRTRACE] \(s)\n", stderr); fflush(stderr) }
+#else
+@inline(never) func _srTrace(_ s: String) {}
+#endif
 
 public protocol StatefulRule: _AttributeBody {
 
@@ -45,6 +51,7 @@ extension StatefulRule {
             return UnsafePointer(pointer)
         }
         nonmutating set {
+            if AnyAttribute.current == nil { _srTrace("SR.VALUE-SETTER nil-current Value=\(Value.self)") }
             context.value = newValue
         }
     }
@@ -54,6 +61,7 @@ extension StatefulRule {
     }
 
     public var attribute: Attribute<Value> {
+        if AnyAttribute.current == nil { _srTrace("StatefulRule.attribute NIL-CURRENT Value=\(Value.self)") }
         return Attribute<Value>(identifier: AnyAttribute.current!)
     }
 
