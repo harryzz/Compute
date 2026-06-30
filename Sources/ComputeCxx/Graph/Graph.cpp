@@ -485,8 +485,9 @@ data::ptr<IndirectNode> Graph::add_indirect_attribute(Subgraph &subgraph, Attrib
     if (size.has_value()) {
         auto attribute_size = attribute.size();
         if (attribute_size.has_value() && attribute_size.value() < offset + size.value()) {
-            precondition_failure("invalid size for indirect attribute: %d vs %u", attribute_size.value(),
-                                 offset_attribute.offset());
+            precondition_failure(
+                "invalid size for indirect attribute: attr_size=%u offset=%u size=%lu base_off=%u",
+                attribute_size.value(), offset, (unsigned long)size.value(), offset_attribute.offset());
         }
     }
 
