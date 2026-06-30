@@ -643,6 +643,10 @@ void IAGGraphInvalidateAllValues(IAGGraphRef graph) {
     graph_context->graph().value_mark_all();
 }
 
+#if !defined(__wasi__)
+// Swiftcall registration (Darwin). On wasm the persistent callback is registered via the plain-C
+// IAGGraphSetInvalidationCallbackC below (the swiftcall path can't be fed from a Swift @convention(c)
+// thunk and would trap "indirect call type mismatch" when fired). See WasiClosureShim.onInvalidation.
 void IAGGraphSetInvalidationCallback(IAGGraphRef graph,
                                     void (*callback)(IAGAttribute, const void *context IAG_SWIFT_CONTEXT)
                                         IAG_SWIFT_CC(swift),
@@ -650,6 +654,7 @@ void IAGGraphSetInvalidationCallback(IAGGraphRef graph,
     auto graph_context = IAG::Graph::Context::from_cf(graph);
     graph_context->set_invalidation_callback(IAG::ClosureFunctionAV<void, IAGAttribute>(callback, callback_context));
 }
+#endif // !__wasi__ ; wasm: IAGGraphSetInvalidationCallbackC in IAGWasiClosureShim.cpp
 
 #pragma mark - Cached value
 
@@ -855,12 +860,15 @@ void IAGGraphWithoutUpdate(void (*body)(const void *context IAG_SWIFT_CONTEXT) I
     IAG::Graph::without_update(IAG::ClosureFunctionVV<void>(body, body_context));
 }
 
+#if !defined(__wasi__)
+// Swiftcall registration (Darwin); wasm uses IAGGraphSetUpdateCallbackC. See WasiClosureShim.onUpdate.
 void IAGGraphSetUpdateCallback(IAGGraphRef graph,
                               void (*callback)(const void *context IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift),
                               const void *callback_context) {
     auto graph_context = IAG::Graph::Context::from_cf(graph);
     graph_context->set_update_callback(IAG::ClosureFunctionVV<void>(callback, callback_context));
 }
+#endif // !__wasi__ ; wasm: IAGGraphSetUpdateCallbackC in IAGWasiClosureShim.cpp
 
 IAGAttribute IAGGraphGetCurrentAttribute() {
     auto update_ptr = IAG::Graph::current_update();

@@ -17,6 +17,7 @@
 // For the internals-coupled variants (e.g. MutateAttributeC -> Graph::attribute_modify_c).
 #include "Attribute/AttributeID/AttributeID.h"
 #include "Graph/Graph.h"
+#include "Graph/Context.h"
 #include "Subgraph/Subgraph.h"
 
 // MARK: - Type field enumeration
@@ -147,6 +148,37 @@ void IAGSubgraphApplyC(IAGSubgraphRef subgraph, uint32_t options,
         return;
     }
     sg->apply(options, IAG::Subgraph::PlainApplyBody{body, body_context});
+}
+
+// MARK: - Subgraph observer
+
+// Registers a persistent observer via a plain-C PlainObserverBody (invoked through the C ABI by
+// notify_observers, so the Swift @convention(c) thunk + context pointer matches it).
+IAGUniqueID IAGSubgraphAddObserverC(IAGSubgraphRef subgraph,
+                                    void (*observer)(const void *context), const void *observer_context) {
+    auto sg = IAG::Subgraph::from_cf(subgraph);
+    if (sg == nullptr) {
+        IAG::precondition_failure("accessing invalidated subgraph");
+    }
+    return sg->add_observer(IAG::Subgraph::PlainObserverBody{observer, observer_context});
+}
+
+// MARK: - Graph callbacks (persistent)
+
+// Store plain-C bodies so call_update / call_invalidation fire the Swift @convention(c) thunk via the
+// C ABI (the swiftcall ClosureFunction path traps on wasm).
+void IAGGraphSetUpdateCallbackC(IAGGraphRef graph,
+                                void (*callback)(const void *context), const void *callback_context) {
+    auto graph_context = IAG::Graph::Context::from_cf(graph);
+    graph_context->set_update_callback(IAG::Graph::Context::PlainUpdateCallback{callback, callback_context});
+}
+
+void IAGGraphSetInvalidationCallbackC(IAGGraphRef graph,
+                                      void (*callback)(IAGAttribute attribute, const void *context),
+                                      const void *callback_context) {
+    auto graph_context = IAG::Graph::Context::from_cf(graph);
+    graph_context->set_invalidation_callback(
+        IAG::Graph::Context::PlainInvalidationCallback{callback, callback_context});
 }
 
 #endif // __wasi__

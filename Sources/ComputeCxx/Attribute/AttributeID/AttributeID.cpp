@@ -1,5 +1,6 @@
 #include "AttributeID.h"
 
+#include "Data/Table.h"
 #include "Errors/Errors.h"
 
 #include "Attribute/AttributeData/Node/IndirectNode.h"
@@ -65,15 +66,32 @@ OffsetAttributeID AttributeID::resolve_slow(TraversalOptions options) const {
             if (options & TraversalOptions::UpdateDependencies) {
                 auto dependency = indirect_node->to_mutable().dependency();
                 if (dependency) {
-                    auto subgraph = dependency.subgraph();
-                    if (subgraph) {
-                        subgraph->graph()->update_attribute(dependency.get_node(), IAGGraphUpdateOptionsNone);
+                    // [#12] `_dependency` is a plain (non-weak) AttributeID. After the dependency's source
+                    // subgraph is torn down (and on wasm its page recycled) this stale dependency can be
+                    // non-null yet NOT a live node, so `get_node()` is null/dangling and
+                    // `update_attribute(...)` aborts in `data::ptr::operator->` (offset 0). Same dangling-
+                    // cross-subgraph-ref class as the offset-projection weak-expiry (see input_value_ref_slow):
+                    // teardown does not reach this dependency to clear it. The dependency pre-update is
+                    // best-effort, so skip it unless the dependency is still a LIVE node (page allocated, its
+                    // subgraph not invalidated) — matches AG (a dead dependency is simply not updated; the
+                    // read then proceeds). Latent on 64-bit Apple where the page isn't freed/recycled.
+                    auto dependency_node = dependency.get_node();
+                    if (dependency_node != nullptr &&
+                        data::table::shared().raw_page_seed(dependency.page_ptr()) != 0) {
+                        auto subgraph = dependency.subgraph();
+                        // Also skip if the dependency node is already updating: a stale dependency whose
+                        // page was RECYCLED to a node already on the update stack would otherwise form a
+                        // false cycle (UpdateStack::push_slow -> print_cycle, which traps on wasm). The
+                        // pre-update is best-effort, so skipping a self/ancestor is safe.
+                        if (subgraph && !subgraph->is_invalidated() && !dependency_node->is_updating()) {
+                            subgraph->graph()->update_attribute(dependency_node, IAGGraphUpdateOptionsNone);
+                        }
                     }
                 }
             }
         }
 
-        if (options && TraversalOptions::EvaluateWeakReferences) {
+        if (options & TraversalOptions::EvaluateWeakReferences) {
             if (indirect_node->source().expired()) {
                 if (options & TraversalOptions::AssertNotNil) {
                     precondition_failure("invalid indirect ref: %u", _value);

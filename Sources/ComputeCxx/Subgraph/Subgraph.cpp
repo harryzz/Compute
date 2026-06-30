@@ -66,22 +66,24 @@ IAGSubgraphStorage *Subgraph::to_cf() const { return reinterpret_cast<IAGSubgrap
 void Subgraph::clear_object() {
     auto object = _object;
     if (object) {
-        object->clear_subgraph();
+        object->clear_subgraph(); // nulls storage->subgraph — the subgraph is now dead
         _object = nullptr;
 
         if (current_subgraph() == this) {
             set_current_subgraph(nullptr);
-#if !defined(__wasi__)
-            // [wasm port] IAGSubgraphStorage is bridged with objc_bridge(id), which is EMPTY on wasm
-            // (no __has_attribute(objc_bridge)) — so Swift ARC does NOT manage struct-held `Subgraph`
-            // refs (e.g. ViewList.Subgraph items, parentSubgraph). The CF refcount is then the only
-            // owner, and releasing here frees a storage the live graph/Swift values still reference
-            // -> use-after-free. Make the storage IMMORTAL on wasm: never release -> never freed ->
-            // every unmanaged Swift ref stays valid. Bounded leak of the CF wrapper only (the
-            // IAG::Subgraph node itself is still freed by the graph). See IAGSubgraph.cpp (same gate).
+#if IAG_CF_STORAGE_SWIFT_MANAGED
+            // Release the current-subgraph ref taken by IAGSubgraphSetCurrent's CFRetain. (Apple: ARC-
+            // bridged storage; wasm: foreign-ref import — both refcount the storage. See the gate in
+            // IAGBase.h.)
             CFRelease(object);
 #endif
         }
+#if defined(__wasi__) && IAG_CF_STORAGE_SWIFT_MANAGED
+        // [#14 faithful] Release the graph-alive self-ref taken at create (IAGSubgraphCreate2). The
+        // subgraph just died, so storage is now owned only by any surviving Swift handles; when the
+        // last one drops, the refcount hits 0 and finalize frees the storage.
+        CFRelease(object);
+#endif
     }
 }
 
@@ -97,7 +99,11 @@ void Subgraph::set_current_subgraph(Subgraph *subgraph) { pthread_setspecific(_c
 
 #pragma mark - Observers
 
+#if defined(__wasi__)
+IAGUniqueID Subgraph::add_observer(PlainObserverBody callback) {
+#else
 IAGUniqueID Subgraph::add_observer(ClosureFunctionVV<void> callback) {
+#endif
     if (!_observers) {
         _observers =
             alloc_bytes(sizeof(vector<Observer, 0, uint64_t> *), 7).unsafe_cast<vector<Observer, 0, uint64_t> *>();
@@ -269,6 +275,12 @@ void Subgraph::invalidate_now(Graph &graph) {
                 if (previous_node) {
                     previous_node->destroy(*_graph);
                     _graph->did_destroy_node();
+                    // A destroyed node must not remain `previous_node`. A non-direct attribute (an
+                    // indirect node leaves BOTH branches below untaken) would otherwise re-enter this
+                    // destroy on the next iteration -> a second vw_destroy on already-freed storage
+                    // (one node destroyed 1 + N times for the N non-direct attributes that follow it).
+                    // Only a fresh direct node may become the next deferred-destroy candidate.
+                    previous_node = nullptr;
                 }
                 if (auto node = attribute.get_node()) {
                     previous_node = node;

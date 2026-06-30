@@ -1,6 +1,6 @@
 #include "LayoutDescriptor.h"
 
-#include <cstring> 
+#include <cstring>
 #include <variant>
 #include <stdio.h>
 
@@ -616,16 +616,25 @@ bool compare_partial(ValueLayout layout, const unsigned char *lhs, const unsigne
     if (layout) {
         Partial partial = find_partial(layout, offset, size);
         if (partial.layout != nullptr) {
+            // [#cmp] `find_partial` returns `partial.location` as an ABSOLUTE offset from the value base
+            // (it accumulates layout-entry sizes from 0 until it reaches `offset`). But our `lhs`/`rhs`
+            // were already advanced by `offset` (AttributeType::compare_values_partial passes lhs+offset),
+            // and `Compare::operator()` adds its position to lhs again. Using the absolute `partial.location`
+            // here double-counts `offset` -> reads `offset + partial.location` bytes past base -> heap
+            // overflow (e.g. offset=248,size=16,partial.location=248 on a 264-byte value read 248 bytes
+            // from base+248). Convert to a location RELATIVE to `offset` so it composes with the already
+            // offset-advanced pointers.
+            size_t rel_location = partial.location >= offset ? partial.location - offset : 0;
             size_t remaining_size = size;
-            if (partial.location != 0) {
-                if (!compare_bytes_top_level(lhs, rhs, partial.location, options)) {
+            if (rel_location != 0) {
+                if (!compare_bytes_top_level(lhs, rhs, rel_location, options)) {
                     return false;
                 }
-                remaining_size = size >= partial.location ? size - partial.location : 0;
+                remaining_size = size >= rel_location ? size - rel_location : 0;
             }
 
             Compare compare_object = Compare();
-            return compare_object(partial.layout, lhs, rhs, partial.location, remaining_size, options);
+            return compare_object(partial.layout, lhs, rhs, rel_location, remaining_size, options);
         }
     }
 

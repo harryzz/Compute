@@ -1,5 +1,6 @@
 #include "Graph.h"
 
+
 #if TARGET_OS_MAC
 #include <CoreFoundation/CFString.h>
 #else
@@ -1244,6 +1245,17 @@ void Graph::mark_changed(data::ptr<Node> node, AttributeType *_Nullable type, co
             mark_changed(AttributeID(node), type, destination_value, source_value, output_index);
             return;
         }
+#if defined(__wasi__)
+        // [#12] Skip a dangling output edge whose target lives in a freed/unregistered (deleted) subgraph;
+        // walking it resolves a stale indirect (resolve_slow -> IndirectNode::is_mutable on garbage). Same
+        // liveness rule as propagate_dirty / WeakAttributeID. Registry pointer-search; no deref of the dead sg.
+        if (auto osg = output_edge.attribute.subgraph()) {
+            if (!contains_subgraph(osg)) {
+                output_index += 1;
+                continue;
+            }
+        }
+#endif
         for (InputEdge &input_edge : output_edge.attribute.get_node()->input_edges()) {
             if (input_edge.attribute.resolve(TraversalOptions::None).attribute() != AttributeID(node)) {
                 continue;
@@ -1533,6 +1545,7 @@ void *Graph::value_ref(AttributeID attribute, uint32_t subgraph_id, const swift:
     }
 
     auto node = resolved.attribute().get_node();
+
     const AttributeType &type = attribute_type(node->type_id());
 
     if ((type.flags() & IAGAttributeTypeFlagsExternal) == 0) {
@@ -1579,6 +1592,27 @@ void *Graph::input_value_ref(data::ptr<IAG::Node> node, AttributeID input, uint3
 void *Graph::input_value_ref_slow(data::ptr<IAG::Node> node, AttributeID input, uint32_t subgraph_id,
                                   IAGInputOptions input_options, const swift::metadata &value_type,
                                   IAGChangedValueFlags *_Nonnull flags_out, uint32_t index) {
+
+    // [#12] A read THROUGH an indirect whose WEAK source has EXPIRED is a legitimate weak-reference
+    // expiry: the source attribute's subgraph was torn down (on wasm its page is then recycled, so the
+    // zone-id weak-seed mismatches and `expired()` fires; latent on 64-bit Apple where the page isn't
+    // recycled and the stale value is read intact). Weak references are allowed to expire, so the read
+    // must yield a DEFAULT rather than aborting — this is what lets an AttributeGraph consumer keep
+    // working (e.g. OpenSwiftUI reading a reconciling view's `geometry.origin()` offset-projection
+    // across a per-update teardown; the next update repoints/rebuilds it). Compute previously aborted
+    // here ("reading from invalid source attribute"), crashing the consumer at frame #14 of the eleev
+    // 2048 demo. Yield a zeroed value of the requested type. Detector: oag-baseline/oagoffset.
+    if (input.is_indirect_node()) {
+        auto weak_resolved = input.resolve(TraversalOptions::EvaluateWeakReferences).attribute();
+        if (!weak_resolved || weak_resolved.is_nil()) {
+            static thread_local uint8_t expired_weak_default[4096];
+            size_t n = value_type.vw_size();
+            if (n <= sizeof(expired_weak_default)) {
+                __builtin_memset(expired_weak_default, 0, n);
+                return expired_weak_default;
+            }
+        }
+    }
 
     if (input_options & IAGInputOptionsSyncMainRef) {
         auto comparator = InputEdge::Comparator(input, IAGInputOptionsUnprefetched | IAGInputOptionsAlwaysEnabled,
@@ -1795,6 +1829,24 @@ void Graph::propagate_dirty(AttributeID attribute) {
 
         for (auto output_edge : std::ranges::reverse_view(output_edges)) {
             AttributeID output = output_edge.attribute;
+
+#if defined(__wasi__)
+            // [#12] Skip a dangling output edge to a node in a freed/unregistered (deleted) subgraph — a
+            // dependent torn down in the deferred-teardown window but left in this node's output_edges. Its
+            // page may still be mapped (looks valid) yet its subgraph is dead, so dirtying it walks a garbage
+            // ancestor chain (the frame-#14 crash). Registry pointer-search only; never derefs the dead
+            // subgraph. Faithful: a dead dependent isn't notified. (Pairs with the WeakAttributeID deleted-bit
+            // fix — the same liveness rule for the bare-edge reference type.)
+            {
+                uint32_t ov = ((uint32_t)output) & ~3u;
+                if (ov != 0 && ov < data::table::shared().ptr_max_offset() && output.is_node()) {
+                    if (auto osg = output.subgraph()) {
+                        if (!contains_subgraph(osg))
+                            continue;
+                    }
+                }
+            }
+#endif
 
             ConstOutputEdgeArrayRef dirty_output_edges = {};
             NodeState next_state = state;

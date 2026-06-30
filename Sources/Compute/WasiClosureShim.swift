@@ -116,7 +116,7 @@ enum WasiClosureShim {
 
     static func onUpdate(_ graph: Graph, _ handler: @escaping () -> Void) {
         let ctx = Unmanaged.passRetained(_UpdateBox(handler)).toOpaque()
-        __IAGGraphSetUpdateCallback(
+        IAGGraphSetUpdateCallbackC(
             graph,
             { c in Unmanaged<_UpdateBox>.fromOpaque(c).takeUnretainedValue().f() },
             UnsafeRawPointer(ctx))
@@ -124,10 +124,24 @@ enum WasiClosureShim {
 
     static func onInvalidation(_ graph: Graph, _ handler: @escaping (AnyAttribute) -> Void) {
         let ctx = Unmanaged.passRetained(_InvalidationBox(handler)).toOpaque()
-        __IAGGraphSetInvalidationCallback(
+        IAGGraphSetInvalidationCallbackC(
             graph,
             { attr, c in Unmanaged<_InvalidationBox>.fromOpaque(c).takeUnretainedValue().f(attr) },
             UnsafeRawPointer(ctx))
+    }
+
+    // Subgraph observer — PERSISTENT (the subgraph stores it and fires it on invalidation), so heap-box
+    // like the graph callbacks above. The stale `@_silgen_name("IAGSubgraphAddObserver")` 2-arg binding
+    // (Subgraph.swift) lowered to a wasm import signature that disagreed with the real 3-arg C symbol
+    // `(IAGSubgraphRef, fn-with-context swiftcc, context) -> IAGUniqueID`, trapping `signature_mismatch`
+    // on wasm. Route through the refined import `__IAGSubgraphAddObserver` (IAG_REFINED_FOR_SWIFT) whose
+    // signature matches the C definition exactly.
+    static func subgraphAddObserver(_ subgraph: Subgraph, _ observer: @escaping () -> Void) -> Int {
+        let ctx = Unmanaged.passRetained(_ObserverBox(observer)).toOpaque()
+        return Int(IAGSubgraphAddObserverC(
+            subgraph,
+            { c in Unmanaged<_ObserverBox>.fromOpaque(c).takeUnretainedValue().f() },
+            UnsafeRawPointer(ctx)))
     }
 }
 
@@ -139,5 +153,9 @@ private final class _UpdateBox {
 private final class _InvalidationBox {
     let f: (AnyAttribute) -> Void
     init(_ f: @escaping (AnyAttribute) -> Void) { self.f = f }
+}
+private final class _ObserverBox {
+    let f: () -> Void
+    init(_ f: @escaping () -> Void) { self.f = f }
 }
 #endif

@@ -66,6 +66,32 @@ void IAGSubgraphApplyC(IAGSubgraphRef subgraph, uint32_t options,
                        void (*body)(IAGAttribute attribute, const void *context),
                        const void *body_context);
 
+// MARK: - Subgraph observer (persistent)
+
+// Plain-C counterpart of IAGSubgraphAddObserver; stores a plain-C PlainObserverBody so notify_observers
+// can invoke the Swift @convention(c) thunk via the C ABI (the swiftcall ClosureFunctionVV path traps
+// "indirect call type mismatch" on wasm). The observer closure is persistent (fired on invalidation).
+IAG_EXPORT
+IAGUniqueID IAGSubgraphAddObserverC(IAGSubgraphRef subgraph,
+                                    void (*observer)(const void *context),
+                                    const void *observer_context);
+
+// MARK: - Graph callbacks (persistent)
+
+// Plain-C counterparts of IAGGraphSetUpdateCallback / IAGGraphSetInvalidationCallback. The persistent
+// callback is stored as a plain-C body (Graph::Context::PlainUpdateCallback / PlainInvalidationCallback)
+// so call_update / call_invalidation can fire the Swift @convention(c) thunk via the C ABI (the
+// swiftcall ClosureFunction path traps "indirect call type mismatch" on wasm).
+IAG_EXPORT
+void IAGGraphSetUpdateCallbackC(IAGGraphRef graph,
+                                void (*callback)(const void *context),
+                                const void *callback_context);
+
+IAG_EXPORT
+void IAGGraphSetInvalidationCallbackC(IAGGraphRef graph,
+                                      void (*callback)(IAGAttribute attribute, const void *context),
+                                      const void *callback_context);
+
 IAG_EXTERN_C_END
 IAG_ASSUME_NONNULL_END
 

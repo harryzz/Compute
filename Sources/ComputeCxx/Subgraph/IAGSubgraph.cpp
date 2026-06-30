@@ -5,11 +5,43 @@
 #include "Graph/Context.h"
 #include "Subgraph.h"
 
+#if IAG_DBG_STORAGE_COUNT
+// [#14] Subgraph-storage liveness counter — proves faithful frees actually happen (created vs finalized).
+// Opt-in (silent by default): set IAG_STORAGE_LOG=1 to print created/finalized/live at process exit, the
+// same env-gated style as IAG_TREE / IAG_LOG_GROW. SAFE under real frees (globals only, no per-storage
+// walk). Under the faithful lifecycle a teardown-heavy run ends at live~=0 (vs live==created when immortal).
+#include <cstdio>
+#include <cstdlib>
+namespace {
+struct StorageCount {
+    long created = 0, finalized = 0;
+    bool armed = false, enabled = false;
+} g_sc;
+inline void iag_sc_dump() {
+    if (!g_sc.enabled) return;
+    fprintf(stderr, "[STORAGE #14] created=%ld finalized=%ld live=%ld\n", g_sc.created, g_sc.finalized,
+            g_sc.created - g_sc.finalized);
+    fflush(stderr);
+}
+inline void iag_sc_arm() {
+    if (!g_sc.armed) {
+        g_sc.armed = true;
+        const char *e = getenv("IAG_STORAGE_LOG");
+        g_sc.enabled = e && atoi(e) != 0;
+        atexit(iag_sc_dump);
+    }
+}
+} // namespace
+#endif
+
 namespace {
 
 CFRuntimeClass &subgraph_type_id() {
     static auto finalize = [](CFTypeRef subgraph_ref) {
         IAGSubgraphStorage *storage = (IAGSubgraphStorage *)subgraph_ref;
+#if IAG_DBG_STORAGE_COUNT
+        g_sc.finalized++;
+#endif
         IAG::Subgraph *subgraph = storage->subgraph;
         if (subgraph) {
             subgraph->clear_object();
@@ -35,6 +67,26 @@ CFRuntimeClass &subgraph_type_id() {
 
 } // namespace
 
+#if defined(__wasi__)
+// [#14 faithful] Off-Apple `objc_bridge(id)` is empty, so Swift ARC does not refcount the CF storage on
+// its own. On wasm we import Subgraph as a foreign-reference type (IAGSubgraph.h IAG_SWIFT_SHARED_REFERENCE)
+// whose retain/release map HERE — make them REAL CFRetain/CFRelease. Combined with the graph-alive
+// self-ref (extra CFRetain at create, released at Subgraph::clear_object) the refcount tracks true
+// liveness: storage is freed only when the subgraph is dead AND no Swift handle references it. The
+// Phase-1 balance instrument proved this never releases-to-zero while the subgraph is alive.
+IAGSubgraphRef IAGSubgraphRetainRef(IAGSubgraphRef subgraph) {
+    if (subgraph) {
+        CFRetain(subgraph);
+    }
+    return subgraph;
+}
+void IAGSubgraphReleaseRef(IAGSubgraphRef subgraph) {
+    if (subgraph) {
+        CFRelease(subgraph);
+    }
+}
+#endif
+
 CFTypeID IAGSubgraphGetTypeID() {
     static CFTypeID type = _CFRuntimeRegisterClass(&subgraph_type_id());
     return type;
@@ -55,14 +107,15 @@ void IAGSubgraphSetCurrent(IAGSubgraphRef subgraph) {
     if (subgraph != nullptr) {
         IAG::Subgraph::set_current_subgraph(IAG::Subgraph::from_cf(subgraph));
         if (IAG::Subgraph::from_cf(subgraph) != nullptr) {
-            CFRetain(subgraph);
+            CFRetain(subgraph); // current-subgraph ref (released when replaced here or at clear_object)
         }
     } else {
         IAG::Subgraph::set_current_subgraph(nullptr);
     }
-#if !defined(__wasi__)
-    // [wasm port] immortal Subgraph storage — see Subgraph::clear_object. objc_bridge(id) is empty on
-    // wasm so Swift ARC can't keep struct-held Subgraph refs alive; never release -> never freed -> no UAF.
+#if IAG_CF_STORAGE_SWIFT_MANAGED
+    // Release the previous current-subgraph ref. (Apple: ARC-bridged storage; wasm: foreign-ref import
+    // — both refcount the storage; gate in IAGBase.h.) The graph-alive self-ref taken at create keeps
+    // the storage alive until the subgraph truly dies, so this never frees a live subgraph's storage.
     if (old_subgraph && old_subgraph->to_cf()) {
         CFRelease(old_subgraph->to_cf());
     }
@@ -84,6 +137,18 @@ IAGSubgraphRef IAGSubgraphCreate2(IAGGraphRef graph, IAGAttribute attribute) {
     IAG::Graph::Context *context = IAG::Graph::Context::from_cf(graph);
 
     instance->subgraph = new IAG::Subgraph((IAG::SubgraphObject *)instance, *context, IAG::AttributeID(attribute));
+#if defined(__wasi__) && IAG_CF_STORAGE_SWIFT_MANAGED
+    // [#14 faithful] graph-alive self-ref: _CFRuntimeCreateInstance returns +1, but create is
+    // RETURNS_RETAINED so Swift ARC takes that ref as the returned handle and releases it when the
+    // handle dies. Take ONE extra ref to represent "alive in the graph", released at clear_object (the
+    // subgraph's true death). This keeps the refcount >=1 for the whole alive lifetime -> no premature
+    // free (Phase-1-proven), and the storage is freed only once dead AND unreferenced by any handle.
+    CFRetain(instance);
+#endif
+#if IAG_DBG_STORAGE_COUNT
+    iag_sc_arm();
+    g_sc.created++;
+#endif
     return instance;
 };
 
@@ -148,6 +213,10 @@ void IAGSubgraphSetIndex(IAGSubgraphRef subgraph, uint32_t index) {
 
 #pragma mark - Observers
 
+#if !defined(__wasi__)
+// Swiftcall observer registration (Darwin). On wasm this swiftcc path can't be fed from the
+// @convention(c) thunk Swift emits — observers are registered via IAGSubgraphAddObserverC instead
+// (plain C ABI), see IAGWasiClosureShim.cpp. The Subgraph stores a PlainObserverBody on wasm.
 IAGUniqueID IAGSubgraphAddObserver(IAGSubgraphRef subgraph,
                                  void (*observer)(const void *context IAG_SWIFT_CONTEXT) IAG_SWIFT_CC(swift),
                                  const void *observer_context) {
@@ -158,6 +227,7 @@ IAGUniqueID IAGSubgraphAddObserver(IAGSubgraphRef subgraph,
     auto callback = IAG::ClosureFunctionVV<void>(observer, observer_context);
     return IAG::Subgraph::from_cf(subgraph)->add_observer(callback);
 }
+#endif
 
 void IAGSubgraphRemoveObserver(IAGSubgraphRef subgraph, IAGUniqueID observer_id) {
     if (IAG::Subgraph::from_cf(subgraph) == nullptr) {

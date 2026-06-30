@@ -102,21 +102,62 @@ template <typename Key, typename Value> class Table : public UntypedTable {
     // Lookup
 
     value_type lookup(const key_type key, key_type *_Nullable found_key) const noexcept {
-        auto result = UntypedTable::lookup(*(void **)&key,
+        // Size-safe (see insert): `*(void**)&key` would read sizeof(void*) bytes from a possibly-narrower
+        // key_type (e.g. data::ptr = 4 bytes vs 64-bit void*) -> ASAN stack-buffer-overflow.
+        void *k = nullptr;
+        __builtin_memcpy(&k, &key, sizeof(key_type) < sizeof(void *) ? sizeof(key_type) : sizeof(void *));
+        auto result = UntypedTable::lookup(k,
                                            reinterpret_cast<UntypedTable::nullable_key_type *_Nullable>(found_key));
-        return *(value_type *)&result;
+        value_type out{};
+        __builtin_memcpy(&out, &result, sizeof(value_type) < sizeof(result) ? sizeof(value_type) : sizeof(result));
+        return out;
     };
 
     void for_each(entry_callback _Nonnull body, void *_Nullable context) const {
+#if defined(__wasi__)
+        // [wasm] Don't type-pun the callback. UntypedTable invokes its callback with the untyped
+        // signature (const void*, const void*, void*) = (i32, i32, i32). Reinterpret-casting a typed
+        // entry_callback to that and call_indirect-ing it traps "indirect call type mismatch" whenever
+        // key_type/value_type aren't i32 — e.g. a uint64_t key (Table<uint64_t, Context*>) is i64, so
+        // Graph::call_update's iteration faulted. Pass a trampoline matching the untyped signature and
+        // reconstruct the typed args inside (keys/values round-trip through pointer-width, exactly as
+        // insert/lookup already store them via *(void**)&). Same "no type-pun on wasm" rule as the
+        // closure shims.
+        struct Tramp {
+            entry_callback body;
+            void *ctx;
+        } tramp{body, context};
+        UntypedTable::for_each(
+            [](const void *k, const void *v, void *c) {
+                auto *t = static_cast<Tramp *>(c);
+                key_type key = (key_type)(uintptr_t)k;
+                value_type val;
+                __builtin_memcpy(&val, &v, sizeof(value_type) < sizeof(v) ? sizeof(value_type) : sizeof(v));
+                t->body(key, val, t->ctx);
+            },
+            &tramp);
+#else
         UntypedTable::for_each((UntypedTable::entry_callback)body, context);
+#endif
     };
 
     // Modifying entries
 
     bool insert(const key_type key, const value_type value) {
-        return UntypedTable::insert(*(void **)&key, *(void **)&value);
+        // Don't type-pun via `*(void**)&` — that reads sizeof(void*) bytes regardless of the actual
+        // type size, so a key/value_type narrower than void* (e.g. data::ptr = 4 bytes vs a 64-bit
+        // void*) reads past the end of the local (ASAN: stack-buffer-overflow). Zero-init a void* and
+        // copy only the type's bytes (same size-safe rule as for_each above).
+        void *k = nullptr, *v = nullptr;
+        __builtin_memcpy(&k, &key, sizeof(key_type) < sizeof(void *) ? sizeof(key_type) : sizeof(void *));
+        __builtin_memcpy(&v, &value, sizeof(value_type) < sizeof(void *) ? sizeof(value_type) : sizeof(void *));
+        return UntypedTable::insert(k, v);
     };
-    bool remove(const key_type key) { return UntypedTable::remove(*(void **)&key); };
+    bool remove(const key_type key) {
+        void *k = nullptr;
+        __builtin_memcpy(&k, &key, sizeof(key_type) < sizeof(void *) ? sizeof(key_type) : sizeof(void *));
+        return UntypedTable::remove(k);
+    };
     bool remove_ptr(const key_type key) { return UntypedTable::remove_ptr(key); };
 };
 

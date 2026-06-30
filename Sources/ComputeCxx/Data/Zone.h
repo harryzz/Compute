@@ -21,14 +21,22 @@ class zone {
         };
         uint32_t _value;
 
+        struct raw_tag {};
+        // [#12] Raw-preserving constructor. The `info(uint32_t zone_id)` ctor below MASKS off the deleted
+        // bit (it takes a clean zone_id), so routing `with_deleted()` / `from_raw_value()` through it silently
+        // stripped the deleted bit — making mark_deleted() a no-op and the deleted-subgraph expiry check dead.
+        // (Latent on 64-bit Apple where pages aren't recycled; a use-after-free crash on wasm32.)
+        info(uint32_t value, raw_tag) : _value(value) {};
+
       public:
         info(uint32_t zone_id) : _value(zone_id & zone_id_mask) {};
 
         uint32_t zone_id() const { return _value & zone_id_mask; };
-        info with_deleted() const { return info(_value | deleted); };
+        bool is_deleted() const { return (_value & deleted) != 0; };
+        info with_deleted() const { return info(_value | deleted, raw_tag{}); };
 
         uint32_t to_raw_value() const { return _value; };
-        static info from_raw_value(uint32_t value) { return info(value); };
+        static info from_raw_value(uint32_t value) { return info(value, raw_tag{}); };
     };
 
   private:

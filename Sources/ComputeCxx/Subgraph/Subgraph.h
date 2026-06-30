@@ -53,8 +53,26 @@ class Subgraph : public data::zone {
     indirect_pointer_vector<Subgraph> _parents;
     vector<SubgraphChild, 0, uint32_t> _children;
 
+#if defined(__wasi__)
+    // [wasm] plain-C observer body (no swiftcall). Swift emits a @convention(c) thunk on wasm that
+    // CANNOT be stored as a swiftcall ClosureFunctionVV and invoked via the swift CC — doing so traps
+    // "indirect call type mismatch" when notify_observers() fires it. Store + call via the plain C ABI,
+    // exactly like PlainApplyBody / PlainTypeIDGetter. Public so IAGSubgraphAddObserverC can build it.
+  public:
+    struct PlainObserverBody {
+        void (*_Nullable fn)(const void *_Nullable) = nullptr;
+        const void *_Nullable ctx = nullptr;
+        explicit operator bool() const { return fn != nullptr; }
+        void operator()() const { fn(ctx); }
+    };
+  private:
+#endif
     struct Observer {
+#if defined(__wasi__)
+        PlainObserverBody callback;
+#else
         ClosureFunctionVV<void> callback;
+#endif
         uint64_t observer_id;
     };
     data::ptr<vector<Observer, 0, uint64_t> *> _observers;
@@ -127,7 +145,11 @@ class Subgraph : public data::zone {
 
     // MARK: Observers
 
+#if defined(__wasi__)
+    IAGUniqueID add_observer(PlainObserverBody callback);
+#else
     IAGUniqueID add_observer(ClosureFunctionVV<void> callback);
+#endif
     void remove_observer(IAGUniqueID observer_id);
     void notify_observers();
 

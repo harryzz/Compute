@@ -95,6 +95,24 @@
 #define IAG_RELATED_TYPE(T,C,I)
 #endif
 
+// Whether Swift ARC actually owns the CF storage (IAGSubgraphStorage / IAGGraphStorage). This is true
+// ONLY on Darwin/Swift, where CoreFoundation types are ARC-bridged: there Swift retains/releases the
+// handle and struct-held refs (e.g. ViewList.Subgraph items, parentSubgraph), so the CF refcount is a
+// real owner and CFRelease at end-of-life is correct. Note: the `objc_bridge` attribute condition
+// above is ALSO satisfied by non-Apple clang (the attribute parses), yet off Darwin the Swift runtime
+// does NOT ARC-manage these foreign CF types — so the attribute is NOT a valid predictor and `__APPLE__`
+// is. WASM: Subgraph is imported as a Swift FOREIGN-REFERENCE type (IAGSubgraph.h IAG_SWIFT_SHARED_REFERENCE)
+// whose retain/release map to real CFRetain/CFRelease, so ARC DOES refcount the storage there — combined
+// with a graph-alive self-ref (CFRetain at create, released at Subgraph::clear_object) the count tracks
+// true liveness and storage is freed faithfully (bug #14; measured premature-free-free in Phase-1).
+// LINUX: no foreign-ref import yet (the CF type imports unmanaged), so the CF refcount is NOT driven by
+// ARC -> keep storage IMMORTAL there until the import is extended. One source of truth for the gate:
+#if defined(__APPLE__) || defined(__wasi__)
+#define IAG_CF_STORAGE_SWIFT_MANAGED 1
+#else
+#define IAG_CF_STORAGE_SWIFT_MANAGED 0
+#endif
+
 #if __has_feature(assume_nonnull)
 #define IAG_ASSUME_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
 #define IAG_ASSUME_NONNULL_END   _Pragma("clang assume_nonnull end")
@@ -203,8 +221,12 @@
   __attribute__((swift_attr("import_reference")))                           \
   __attribute__((swift_attr(_IAG_STRINGIFY(retain:_retain))))       \
   __attribute__((swift_attr(_IAG_STRINGIFY(release:_release))))
+#define IAG_SWIFT_RETURNS_RETAINED __attribute__((swift_attr("returns_retained")))
+#define IAG_SWIFT_RETURNS_UNRETAINED __attribute__((swift_attr("returns_unretained")))
 #else
 #define IAG_SWIFT_SHARED_REFERENCE(_retain, _release)
+#define IAG_SWIFT_RETURNS_RETAINED
+#define IAG_SWIFT_RETURNS_UNRETAINED
 #endif
 
 #if __has_include(<ptrcheck.h>)

@@ -162,12 +162,18 @@ bool Compare::operator()(ValueLayout layout, const unsigned char *lhs, const uns
         case ValueLayoutEntryKind::Function: {
             bool is_function = kind == ValueLayoutEntryKind::Function;
 
-            size_t item_end = offset + 8;
+            // [wasm] a heap-ref/function field is one POINTER wide. The layout builder emits it as
+            // sizeof(void*) (LayoutDescriptor.cpp:1239/1248) and the size-walker advances by sizeof(void*)
+            // (LayoutDescriptor.cpp:689) — but this comparison reader hardcoded 8 (a 64-bit-pointer Apple-ism).
+            // On wasm32 sizeof(void*)==4, so +8 over-advanced past every heap-ref field, misaligning ALL
+            // subsequent fields -> wrong compare -> consumers (OpenSwiftUI reconciliation) see "changed" and
+            // RE-CREATE instead of reuse. Use the real pointer size so encode/decode/compare agree.
+            size_t item_end = offset + sizeof(void *);
 
             if (lhs + offset != rhs + offset) {
                 if (!compare_heap_objects(lhs + offset, rhs + offset, options & ~IAGComparisonOptionsTraceCompareFailed,
                                           is_function)) {
-                    failed(options, lhs, rhs, offset, 8, nullptr);
+                    failed(options, lhs, rhs, offset, sizeof(void *), nullptr);
                     return false;
                 }
             }

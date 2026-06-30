@@ -22,8 +22,31 @@ class Graph::Context {
     const void *_context = nullptr;
     uint64_t _id;
 
+#if defined(__wasi__)
+  public:
+    // [wasm] plain-C persistent graph callbacks (no swiftcall). Swift emits @convention(c) thunks on
+    // wasm that cannot be stored as swiftcall ClosureFunctions and invoked via the swift CC — firing
+    // them traps "indirect call type mismatch". Store + call via the plain C ABI, exactly like
+    // Subgraph::PlainObserverBody / PlainApplyBody. See IAGGraphSetUpdateCallbackC / *InvalidationC.
+    struct PlainInvalidationCallback {
+        void (*_Nullable fn)(IAGAttribute, const void *_Nullable) = nullptr;
+        const void *_Nullable ctx = nullptr;
+        explicit operator bool() const { return fn != nullptr; }
+        void operator()(IAGAttribute a) const { fn(a, ctx); }
+    };
+    struct PlainUpdateCallback {
+        void (*_Nullable fn)(const void *_Nullable) = nullptr;
+        const void *_Nullable ctx = nullptr;
+        explicit operator bool() const { return fn != nullptr; }
+        void operator()() const { fn(ctx); }
+    };
+  private:
+    PlainInvalidationCallback _invalidation_callback = {};
+    PlainUpdateCallback _update_callback = {};
+#else
     ClosureFunctionAV<void, IAGAttribute> _invalidation_callback = {nullptr, nullptr};
     ClosureFunctionVV<void> _update_callback = {nullptr, nullptr};
+#endif
 
     uint64_t _deadline = UINT64_MAX;
     uint64_t _graph_version = 0; // [wandr] was uninitialized
@@ -46,10 +69,15 @@ class Graph::Context {
     const void *_Nullable context() const { return _context; };
     void set_context(const void *_Nullable context) { _context = context; };
 
+#if defined(__wasi__)
+    void set_invalidation_callback(PlainInvalidationCallback callback) { _invalidation_callback = callback; }
+    void set_update_callback(PlainUpdateCallback callback) { _update_callback = callback; }
+#else
     void set_invalidation_callback(IAG::ClosureFunctionAV<void, IAGAttribute> callback) {
         _invalidation_callback = callback;
     }
     void set_update_callback(IAG::ClosureFunctionVV<void> callback) { _update_callback = callback; }
+#endif
 
     uint64_t deadline() const { return _deadline; };
     void set_deadline(uint64_t deadline);

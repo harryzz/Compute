@@ -10,6 +10,12 @@
 
 #include "ComputeCxx/IAGSubgraph.h"
 
+// [DBG #14] minimal live-storage counter — proves faithful frees actually free (created vs finalized).
+// Set to 0 / delete to remove; pure diagnostic, no behavior change. Counter lives in IAGSubgraph.cpp.
+#ifndef IAG_DBG_STORAGE_COUNT
+#define IAG_DBG_STORAGE_COUNT 1
+#endif
+
 IAG_ASSUME_NONNULL_BEGIN
 
 namespace IAG {

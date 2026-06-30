@@ -153,7 +153,15 @@ bool Graph::UpdateStack::push_slow(data::ptr<Node> node_ptr, Node &node, bool ig
 }
 
 Graph::UpdateStatus Graph::UpdateStack::update() {
+    // [wandr] Iterative, not recursive. `_frames` is already an explicit work stack, so pushing an
+    // input and re-entering the loop is equivalent to the original `return update()` self-call — but
+    // without growing the C++ call stack per graph level. The native build tolerated the recursion
+    // (8MB stack); on wasm a deep attribute chain overflowed the fixed link-time shadow stack and
+    // faulted with a wild pointer (oagupdate: depth 50 OK, 200+ crashed). `goto restart_frame`
+    // restarts on the newly-pushed top frame; the parent frame is revisited (from num_pushed_inputs)
+    // once that child pops — identical ordering to the former recursion.
     while (true) {
+    restart_frame:
         Frame &frame = _frames.back();
         data::ptr<Node> node = frame.attribute;
 
@@ -214,7 +222,7 @@ Graph::UpdateStatus Graph::UpdateStack::update() {
                             frame.num_pushed_inputs = input_index;
                             push(dependency.get_node(), *dependency.get_node().get(), false, false);
                             // go to top regardless
-                            return update();
+                            goto restart_frame;
                         }
                     }
                 }
@@ -232,7 +240,7 @@ Graph::UpdateStatus Graph::UpdateStack::update() {
                         frame.num_pushed_inputs = input_index + 1;
                         if (push(input_node, *input_node.get(), true, true)) {
                             // go to top
-                            return update();
+                            goto restart_frame;
                         }
                     }
 
@@ -244,6 +252,21 @@ Graph::UpdateStatus Graph::UpdateStack::update() {
         // Update value
 
         bool changed = false;
+#if defined(__wasi__)
+        // [#12] Don't update a node reached through the cascade whose subgraph is dead (unregistered/deleted)
+        // or whose type_id is garbage — a stale node left by a teardown (e.g. a dangling mutable-indirect
+        // dependency pushed above). attribute_type(node->type_id()) would index _types OOB -> garbage vtable
+        // -> AttributeType::update crash (frame #14). Same liveness rule as the other #12 guards; a dead
+        // attribute simply doesn't update. Pointer/bounds checks only; no deref of dead memory.
+        if (frame.pending) {
+            auto nsg = AttributeID(node).subgraph();
+            uint32_t tid = node->type_id();
+            if (!nsg || !_graph->contains_subgraph(nsg) || tid == 0 || tid >= _graph->_types.size()) {
+                frame.pending = false;
+            }
+        }
+#endif
+
         if (frame.pending) {
             if (_graph->has_main_handler() && node->is_main_thread()) {
                 return Graph::UpdateStatus::NeedsCallMainHandler;

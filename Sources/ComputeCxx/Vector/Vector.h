@@ -143,6 +143,12 @@ void *_Nullable realloc_vector(void *_Nullable buffer, void *_Nonnull _inline_bu
     // copy data from inline buffer into heap buffer
     if (!buffer) {
         memcpy(new_buffer, _inline_buffer, (*size) * element_size_bytes);
+        // [#383] The elements have been RELOCATED to the heap buffer; clear the inline source. `_inline_buffer`
+        // is a `T[]` member, so the compiler auto-destructs it when the vector dies — without this, those
+        // stale (already-relocated) slots would have ~T() run a SECOND time. For a refcounted element like
+        // util::cf_ptr that is a double CFRelease (the render_frame #383 subgraph-storage over-release /
+        // double-finalize). Zeroing is the moved-from state these trivially-relocatable elements assume.
+        memset(_inline_buffer, 0, (*size) * element_size_bytes);
     }
 
     *size = new_size;

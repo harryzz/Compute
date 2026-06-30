@@ -245,6 +245,13 @@ class Graph {
     void add_subgraph(Subgraph &subgraph);
     void remove_subgraph(Subgraph &subgraph);
 
+    // [ALIAS-TRACKER] Is `subgraph` a currently-live, registered subgraph? `_subgraphs` is sorted (add inserts
+    // via lower_bound; remove's std::remove preserves order) and remove_subgraph runs before delete, so a
+    // freed/recycled-page subgraph is absent. Pure pointer binary-search — never dereferences the candidate.
+    bool contains_subgraph(const Subgraph *subgraph) const {
+        return std::binary_search(_subgraphs.begin(), _subgraphs.end(), subgraph);
+    }
+
     void add_subgraphs_with_cached_nodes(Subgraph &subgraph) { _subgraphs_with_cached_nodes.push_back(&subgraph); };
 
     class without_invalidating {
